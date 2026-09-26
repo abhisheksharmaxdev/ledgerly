@@ -20,15 +20,27 @@ export function budgetStatus(budgetMinor: number, spentMinor: number): BudgetSta
 }
 
 /** Every number on the dashboard is derived here, from database rows only. */
-export function buildMonthSummary(db: DB, userId: number, month: string, today: string): MonthSummary {
+export async function buildMonthSummary(db: DB, userId: number, month: string, today: string): Promise<MonthSummary> {
   const { start, end, days } = monthBounds(month);
   const period = periodOf(month, today);
   const daysElapsed = period === "past" ? days : period === "current" ? Number(today.slice(8, 10)) : 0;
 
-  const categories = listCategories(db, userId);
-  const plan = getPlan(db, userId, month);
+  const prevMonth = shiftMonth(month, -1);
+  const prevBounds = monthBounds(prevMonth);
+  const { year: prevYear, month: prevM } = parseMonthKey(prevMonth);
+  const samePeriodEnd = `${prevMonth}-${pad2(Math.min(daysElapsed, daysInMonth(prevYear, prevM)))}`;
+
+  // Independent queries run in parallel (each one is a network round trip on a hosted database).
+  const [categories, plan, totalRows, prevRows, samePeriodSpent, todaySpent] = await Promise.all([
+    listCategories(db, userId),
+    getPlan(db, userId, month),
+    totalsByCategory(db, userId, start, end),
+    monthlyTotals(db, userId, prevBounds.start, prevBounds.end),
+    period === "current" ? spendingBetween(db, userId, prevBounds.start, samePeriodEnd) : null,
+    period === "current" ? spendingBetween(db, userId, today, today) : null,
+  ]);
   const budgetById = new Map((plan?.budgets ?? []).map((b) => [b.categoryId, b.amountMinor]));
-  const totals = new Map(totalsByCategory(db, userId, start, end).map((t) => [t.categoryId, t]));
+  const totals = new Map(totalRows.map((t) => [t.categoryId, t]));
 
   let spentMinor = 0;
   let savedMinor = 0;
@@ -76,19 +88,10 @@ export function buildMonthSummary(db: DB, userId: number, month: string, today: 
   const incomeMinor = plan?.incomeMinor ?? 0;
 
   // Previous month comparison.
-  const prevMonth = shiftMonth(month, -1);
-  const prevBounds = monthBounds(prevMonth);
-  const prevRows = monthlyTotals(db, userId, prevBounds.start, prevBounds.end);
   const prevSpent = prevRows.filter((r) => r.kind === "expense").reduce((s, r) => s + r.totalMinor, 0);
   const prevSaved = prevRows.filter((r) => r.kind === "savings").reduce((s, r) => s + r.totalMinor, 0);
   const prevCount = prevRows.reduce((s, r) => s + r.count, 0);
-
-  let samePeriodSpentMinor: number | null = null;
-  if (period === "current") {
-    const { year, month: m } = parseMonthKey(prevMonth);
-    const day = Math.min(daysElapsed, daysInMonth(year, m));
-    samePeriodSpentMinor = spendingBetween(db, userId, prevBounds.start, `${prevMonth}-${pad2(day)}`);
-  }
+  const samePeriodSpentMinor = samePeriodSpent;
 
   let changeMinor: number | null = null;
   let changePercent: number | null = null;
@@ -98,8 +101,7 @@ export function buildMonthSummary(db: DB, userId: number, month: string, today: 
     changePercent = percent(changeMinor, base);
   }
 
-  const todaySpentMinor =
-    period === "current" ? spendingBetween(db, userId, today, today) : null;
+  const todaySpentMinor = todaySpent;
 
   const expenseBreakdown = breakdown.filter((b) => b.kind === "expense");
 

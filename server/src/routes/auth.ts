@@ -35,9 +35,9 @@ export function authRouter(deps: { db: DB; config: AppConfig; secret: string; ma
     handler: (_req, _res, next) => next(new HttpError(429, "rate_limited", "Too many sign-in attempts. Please wait 15 minutes and try again.")),
   });
 
-  r.post("/login", loginLimiter, (req, res) => {
+  r.post("/login", loginLimiter, async (req, res) => {
     const { email, password } = parseOrThrow(loginSchema, req.body);
-    const user = getUserByEmail(db, email);
+    const user = await getUserByEmail(db, email);
     const ok = verifyPassword(password, user?.password_hash ?? DUMMY_HASH);
     if (!user || !ok) throw new HttpError(401, "invalid_credentials", "Incorrect email or password.");
     // Approval status is only revealed to someone who already knows the password.
@@ -47,7 +47,7 @@ export function authRouter(deps: { db: DB; config: AppConfig; secret: string; ma
     if (user.status === "rejected") {
       throw new HttpError(403, "account_rejected", "This registration was not approved. Please contact the administrator.");
     }
-    touchLogin(db, user.id);
+    await touchLogin(db, user.id);
     res.cookie(SESSION_COOKIE, createSessionToken(secret, user.id, user.session_version, cfg.sessionTtlDays), {
       ...cookieOpts,
       maxAge: cfg.sessionTtlDays * 86_400_000,
@@ -64,14 +64,14 @@ export function authRouter(deps: { db: DB; config: AppConfig; secret: string; ma
     handler: (_req, _res, next) => next(new HttpError(429, "rate_limited", "Too many signup attempts. Please try again later.")),
   });
 
-  r.post("/signup", signupLimiter, (req, res) => {
+  r.post("/signup", signupLimiter, async (req, res) => {
     const { email, password } = parseOrThrow(signupSchema, req.body);
     // Hash before looking the email up so both paths take the same time.
     const hash = hashPassword(password);
-    const existing = getUserByEmail(db, email);
+    const existing = await getUserByEmail(db, email);
     if (!existing) {
-      const user = createPendingUser(db, email, hash);
-      const to = cfg.adminNotifyEmail || getAdmin(db)?.email;
+      const user = await createPendingUser(db, email, hash);
+      const to = cfg.adminNotifyEmail || (await getAdmin(db))?.email;
       if (to) {
         mailer
           .send(signupNotification({ to, email: user.email, createdAt: user.created_at, appUrl: cfg.appUrl }))

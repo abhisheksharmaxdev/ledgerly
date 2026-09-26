@@ -12,33 +12,33 @@ import { parseOrThrow } from "../utils/validate";
 export function adminRouter(db: DB, mailer: Mailer): Router {
   const r = Router();
 
-  r.get("/overview", (_req, res) => {
-    const body: AdminOverview = { counts: countUsersByStatus(db), mailConfigured: mailer.configured };
+  r.get("/overview", async (_req, res) => {
+    const body: AdminOverview = { counts: await countUsersByStatus(db), mailConfigured: mailer.configured };
     res.json(body);
   });
 
-  r.get("/users", (req, res) => {
+  r.get("/users", async (req, res) => {
     const { status } = parseOrThrow(
       z.object({ status: z.enum(["pending", "active", "rejected", "all"]).default("all") }),
       req.query,
     );
-    res.json(listUsers(db, status === "all" ? undefined : status));
+    res.json(await listUsers(db, status === "all" ? undefined : status));
   });
 
-  r.post("/users/:id/approve", (req, res) => {
-    const user = setUserStatus(db, idParam(req), "active");
+  r.post("/users/:id/approve", async (req, res) => {
+    const user = await setUserStatus(db, idParam(req), "active");
     if (!user) throw notFound("User not found");
     res.json(toAdminUser(user));
   });
 
-  r.post("/users/:id/reject", (req, res) => {
-    const user = setUserStatus(db, idParam(req), "rejected");
+  r.post("/users/:id/reject", async (req, res) => {
+    const user = await setUserStatus(db, idParam(req), "rejected");
     if (!user) throw notFound("User not found");
     res.json(toAdminUser(user));
   });
 
-  r.delete("/users/:id", (req, res) => {
-    if (!deleteUserAndData(db, idParam(req))) throw notFound("User not found");
+  r.delete("/users/:id", async (req, res) => {
+    if (!(await deleteUserAndData(db, idParam(req)))) throw notFound("User not found");
     res.status(204).end();
   });
 

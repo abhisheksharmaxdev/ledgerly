@@ -15,7 +15,7 @@ const ADMIN_HASH = hashPassword(ADMIN.password);
 const testConfig = { ...config, cookieSecure: false, trustProxy: "", sessionSecret: "t".repeat(40), adminNotifyEmail: "", appUrl: "" };
 
 let db: DB;
-let app: ReturnType<typeof createApp>;
+let app: Awaited<ReturnType<typeof createApp>>;
 let agent: ReturnType<typeof request.agent>;
 let cats: Record<string, Category>;
 let sentMail: MailMessage[];
@@ -23,7 +23,7 @@ let sentMail: MailMessage[];
 /** Signs up, gets approved by the admin, and returns a logged-in agent for that user. */
 async function approvedUser(email: string, password = "user-password-1") {
   await request(app).post("/api/auth/signup").set(H).send({ email, password }).expect(202);
-  const id = getUserByEmail(db, email)!.id;
+  const id = (await getUserByEmail(db, email))!.id;
   const admin = request.agent(app);
   await admin.post("/api/auth/login").set(H).send(ADMIN).expect(200);
   await admin.post(`/api/admin/users/${id}/approve`).set(H).expect(200);
@@ -33,11 +33,11 @@ async function approvedUser(email: string, password = "user-password-1") {
 }
 
 beforeEach(async () => {
-  db = openDatabase(":memory:");
+  db = await openDatabase(":memory:");
   sentMail = [];
   const mailer: Mailer = { configured: true, send: async (m) => void sentMail.push(m) };
-  app = createApp({ db, config: testConfig, logger: silent, mailer });
-  ensureAdmin(db, ADMIN.email, ADMIN_HASH);
+  app = await createApp({ db, config: testConfig, logger: silent, mailer });
+  await ensureAdmin(db, ADMIN.email, ADMIN_HASH);
   agent = await approvedUser("alice@example.com");
   const res = await agent.get("/api/categories");
   cats = Object.fromEntries((res.body as Category[]).map((c) => [c.slug, c]));
@@ -251,7 +251,7 @@ describe("signup → approval → login", () => {
   it("keeps new accounts pending until the admin approves them", async () => {
     const signup = await request(app).post("/api/auth/signup").set(H).send({ email: "Bob@Example.com ", password: "bob-password-1" });
     expect(signup.status).toBe(202);
-    const bob = getUserByEmail(db, "bob@example.com")!;
+    const bob = (await getUserByEmail(db, "bob@example.com"))!;
     expect(bob.status).toBe("pending");
     expect(bob.password_hash).toMatch(/^scrypt:/);
     expect(bob.password_hash).not.toContain("bob-password-1");
@@ -282,7 +282,7 @@ describe("signup → approval → login", () => {
     expect((await request(app).post("/api/auth/login").set(H).send({ email: "alice@example.com", password: "nope-nope-nope" })).status).toBe(401);
     expect((await request(app).post("/api/auth/login").set(H).send({ email: "ghost@example.com", password: "nope-nope-nope" })).status).toBe(401);
 
-    const alice = getUserByEmail(db, "alice@example.com")!;
+    const alice = (await getUserByEmail(db, "alice@example.com"))!;
     const admin = request.agent(app);
     await admin.post("/api/auth/login").set(H).send(ADMIN).expect(200);
     await admin.post(`/api/admin/users/${alice.id}/reject`).set(H).expect(200);
@@ -298,8 +298,8 @@ describe("signup → approval → login", () => {
     expect(dup.status).toBe(202);
     const adminDup = await request(app).post("/api/auth/signup").set(H).send({ email: ADMIN.email, password: "another-password", role: "admin" });
     expect(adminDup.status).toBe(202);
-    expect(getUserByEmail(db, ADMIN.email)!.password_hash).toBe(ADMIN_HASH);
-    expect(getUserByEmail(db, "alice@example.com")!.role).toBe("user");
+    expect((await getUserByEmail(db, ADMIN.email))!.password_hash).toBe(ADMIN_HASH);
+    expect((await getUserByEmail(db, "alice@example.com"))!.role).toBe("user");
   });
 
   it("validates signup input and logs out", async () => {
@@ -327,7 +327,7 @@ describe("protected APIs", () => {
   it("the admin account can't be rejected or deleted through the admin API", async () => {
     const admin = request.agent(app);
     await admin.post("/api/auth/login").set(H).send(ADMIN).expect(200);
-    const adminId = getUserByEmail(db, ADMIN.email)!.id;
+    const adminId = (await getUserByEmail(db, ADMIN.email))!.id;
     expect((await admin.post(`/api/admin/users/${adminId}/reject`).set(H)).status).toBe(404);
     expect((await admin.delete(`/api/admin/users/${adminId}`).set(H)).status).toBe(404);
   });
@@ -378,10 +378,10 @@ describe("data isolation", () => {
 
     const admin = request.agent(app);
     await admin.post("/api/auth/login").set(H).send(ADMIN).expect(200);
-    await admin.delete(`/api/admin/users/${getUserByEmail(db, "bob@example.com")!.id}`).set(H).expect(204);
+    await admin.delete(`/api/admin/users/${(await getUserByEmail(db, "bob@example.com"))!.id}`).set(H).expect(204);
 
-    expect(getUserByEmail(db, "bob@example.com")).toBeNull();
-    expect((db.prepare("SELECT COUNT(*) AS n FROM expenses").get() as { n: number }).n).toBe(1);
+    expect(await getUserByEmail(db, "bob@example.com")).toBeNull();
+    expect((await db.execute("SELECT COUNT(*) AS n FROM expenses")).rows[0].n).toBe(1);
     expect((await bob.get("/api/expenses")).status).toBe(401);
     expect((await agent.get("/api/expenses")).body.total).toBe(1);
   });

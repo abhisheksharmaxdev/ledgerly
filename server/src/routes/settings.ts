@@ -7,11 +7,11 @@ import { parseOrThrow } from "../utils/validate";
 
 export function settingsRouter(db: DB): Router {
   const r = Router();
-  r.get("/", (req, res) => {
-    res.json(getSettings(db, userId(req)));
+  r.get("/", async (req, res) => {
+    res.json(await getSettings(db, userId(req)));
   });
-  r.put("/", (req, res) => {
-    res.json(updateSettings(db, userId(req), parseOrThrow(settingsSchema, req.body)));
+  r.put("/", async (req, res) => {
+    res.json(await updateSettings(db, userId(req), parseOrThrow(settingsSchema, req.body)));
   });
   return r;
 }

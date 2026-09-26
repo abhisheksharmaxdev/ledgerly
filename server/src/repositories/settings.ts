@@ -1,9 +1,9 @@
-import type { DB } from "../db/connection";
+import { all, batch, type DB } from "../db/connection";
 import { DEFAULT_SETTINGS, type AppSettings } from "../../../shared/constants";
 import { settingsSchema } from "../../../shared/schemas";
 
-export function getSettings(db: DB, userId: number): AppSettings {
-  const rows = db.prepare("SELECT key, value FROM settings WHERE user_id = ?").all(userId) as { key: string; value: string }[];
+export async function getSettings(db: DB, userId: number): Promise<AppSettings> {
+  const rows = await all<{ key: string; value: string }>(db, "SELECT key, value FROM settings WHERE user_id = ?", [userId]);
   const stored: Record<string, unknown> = {};
   for (const r of rows) {
     try {
@@ -17,14 +17,16 @@ export function getSettings(db: DB, userId: number): AppSettings {
   return { ...DEFAULT_SETTINGS, ...(parsed.success ? parsed.data : {}) };
 }
 
-export function updateSettings(db: DB, userId: number, patch: Partial<AppSettings>): AppSettings {
-  const upsert = db.prepare(
-    "INSERT INTO settings (user_id, key, value) VALUES (?, ?, ?) ON CONFLICT (user_id, key) DO UPDATE SET value = excluded.value",
-  );
-  db.transaction(() => {
-    for (const [key, value] of Object.entries(patch)) {
-      if (value !== undefined) upsert.run(userId, key, JSON.stringify(value));
-    }
-  })();
+export function updateSettingsStatements(userId: number, patch: Partial<AppSettings>) {
+  return Object.entries(patch)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => ({
+      sql: "INSERT INTO settings (user_id, key, value) VALUES (?, ?, ?) ON CONFLICT (user_id, key) DO UPDATE SET value = excluded.value",
+      args: [userId, key, JSON.stringify(value)],
+    }));
+}
+
+export async function updateSettings(db: DB, userId: number, patch: Partial<AppSettings>): Promise<AppSettings> {
+  await batch(db, updateSettingsStatements(userId, patch));
   return getSettings(db, userId);
 }

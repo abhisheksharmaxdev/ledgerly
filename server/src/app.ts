@@ -29,10 +29,11 @@ export interface AppDeps {
   mailer?: Mailer;
 }
 
-export function createApp({ db, config, logger = console, serveClient = false, mailer }: AppDeps) {
+export async function createApp({ db, config, logger = console, serveClient = false, mailer }: AppDeps) {
   const mail = mailer ?? createMailer(config, logger);
   // SESSION_SECRET if configured, otherwise a random secret generated once and stored in the DB.
-  const sessionSecret = config.sessionSecret || getOrCreateSecret(db, "session_secret", () => crypto.randomBytes(48).toString("base64url"));
+  const sessionSecret =
+    config.sessionSecret || (await getOrCreateSecret(db, "session_secret", () => crypto.randomBytes(48).toString("base64url")));
 
   const app = express();
   app.disable("x-powered-by");
@@ -66,8 +67,8 @@ export function createApp({ db, config, logger = console, serveClient = false, m
     next();
   });
 
-  api.get("/health", (_req, res) => {
-    db.prepare("SELECT 1").get();
+  api.get("/health", async (_req, res) => {
+    await db.execute("SELECT 1");
     res.json({ ok: true });
   });
 

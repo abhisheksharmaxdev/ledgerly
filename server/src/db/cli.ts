@@ -1,13 +1,15 @@
 /**
- * Database maintenance commands:
+ * Database maintenance commands (they use the same DATABASE_URL as the server, so they work
+ * against a local file or a Turso database):
  *   npm run create-admin -- you@example.com   create/update the single admin (prompts for the password)
  *   npm run db:migrate                        apply pending migrations (also runs automatically on start)
  *   npm run db:seed [-- user@example.com]     add demo data to an account (default: the admin)
  *   npm run db:unseed [-- user@example.com]   remove only demo data from that account
- *   npm run db:reset -- --yes                 delete the database file and recreate an empty schema
+ *   npm run db:reset -- --yes                 delete a local database file and recreate an empty schema
  */
 import fs from "node:fs";
 import readline from "node:readline";
+import { fileURLToPath } from "node:url";
 import { config } from "../config";
 import { localToday } from "../../../shared/dates";
 import { PASSWORD_MIN, emailSchema } from "../../../shared/schemas";
@@ -36,9 +38,11 @@ function prompt(question: string, hidden = false): Promise<string> {
   });
 }
 
-function targetUser(db: DB): number {
+const open = () => openDatabase(config.databaseUrl, config.databaseAuthToken);
+
+async function targetUser(db: DB): Promise<number> {
   const email = args.find((a) => a.includes("@"));
-  const user = email ? getUserByEmail(db, email) : getAdmin(db);
+  const user = email ? await getUserByEmail(db, email) : await getAdmin(db);
   if (!user) {
     console.error(email ? `No account with email ${email}.` : "No admin account yet. Run: npm run create-admin -- you@example.com");
     process.exit(1);
@@ -63,39 +67,44 @@ async function main() {
         console.error("Passwords don't match.");
         process.exit(1);
       }
-      const db = openDatabase(config.databasePath);
-      const r = ensureAdmin(db, parsed.data, hashPassword(password));
+      const db = await open();
+      const r = await ensureAdmin(db, parsed.data, hashPassword(password));
       db.close();
       console.info(`Admin account ${r.action}: ${parsed.data}${r.claimed ? ` (${r.claimed} existing records assigned to it)` : ""}`);
       break;
     }
     case "migrate": {
-      openDatabase(config.databasePath).close();
-      console.info(`Migrations applied: ${config.databasePath}`);
+      (await open()).close();
+      console.info("Migrations applied.");
       break;
     }
     case "seed": {
-      const db = openDatabase(config.databasePath);
-      const r = loadDemoData(db, targetUser(db), localToday());
+      const db = await open();
+      const r = await loadDemoData(db, await targetUser(db), localToday());
       db.close();
       console.info(`Demo data added: ${r.expenses} expenses, ${r.plans} plans (${r.skippedPlans} months kept their real plan).`);
       break;
     }
     case "unseed": {
-      const db = openDatabase(config.databasePath);
-      const r = removeDemoData(db, targetUser(db));
+      const db = await open();
+      const r = await removeDemoData(db, await targetUser(db));
       db.close();
       console.info(`Demo data removed: ${r.expenses} expenses, ${r.plans} plans.`);
       break;
     }
     case "reset": {
-      if (!args.includes("--yes")) {
-        console.error(`This deletes ALL data and accounts in ${config.databasePath}. Re-run with: npm run db:reset -- --yes`);
+      if (!config.databaseUrl.startsWith("file:")) {
+        console.error("db:reset only works on a local database file. Delete and recreate a Turso database from the Turso dashboard.");
         process.exit(1);
       }
-      for (const suffix of ["", "-wal", "-shm"]) fs.rmSync(config.databasePath + suffix, { force: true });
-      openDatabase(config.databasePath).close();
-      console.info(`Database reset: ${config.databasePath}`);
+      const file = fileURLToPath(config.databaseUrl);
+      if (!args.includes("--yes")) {
+        console.error(`This deletes ALL data and accounts in ${file}. Re-run with: npm run db:reset -- --yes`);
+        process.exit(1);
+      }
+      for (const suffix of ["", "-wal", "-shm"]) fs.rmSync(file + suffix, { force: true });
+      (await open()).close();
+      console.info(`Database reset: ${file}`);
       break;
     }
     default:

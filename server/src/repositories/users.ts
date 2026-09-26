@@ -1,6 +1,7 @@
-import type { DB } from "../db/connection";
+import { all, batch, get, run, type DB, type InStatement } from "../db/connection";
 import type { AdminUser, UserRole, UserStatus } from "../../../shared/types";
-import { seedDefaultCategories } from "./categories";
+import { defaultCategoryStatements } from "./categories";
+import { deletePlansStatements } from "./plans";
 
 interface UserRow {
   id: number;
@@ -28,42 +29,44 @@ export const toAdminUser = (r: UserRow): AdminUser => ({
   lastLoginAt: r.last_login_at,
 });
 
-export function getUserById(db: DB, id: number): UserRecord | null {
-  return (db.prepare("SELECT * FROM users WHERE id = ?").get(id) as UserRow | undefined) ?? null;
+export async function getUserById(db: DB, id: number): Promise<UserRecord | null> {
+  return (await get<UserRow>(db, "SELECT * FROM users WHERE id = ?", [id])) ?? null;
 }
 
-export function getUserByEmail(db: DB, email: string): UserRecord | null {
-  return (db.prepare("SELECT * FROM users WHERE email = ?").get(email.trim().toLowerCase()) as UserRow | undefined) ?? null;
+export async function getUserByEmail(db: DB, email: string): Promise<UserRecord | null> {
+  return (await get<UserRow>(db, "SELECT * FROM users WHERE email = ?", [email.trim().toLowerCase()])) ?? null;
 }
 
-export function getAdmin(db: DB): UserRecord | null {
-  return (db.prepare("SELECT * FROM users WHERE role = 'admin'").get() as UserRow | undefined) ?? null;
+export async function getAdmin(db: DB): Promise<UserRecord | null> {
+  return (await get<UserRow>(db, "SELECT * FROM users WHERE role = 'admin'")) ?? null;
 }
 
 /** New self-registered accounts always start as pending, ordinary users. */
-export function createPendingUser(db: DB, email: string, passwordHash: string): UserRecord {
-  return db.transaction(() => {
-    const row = db
-      .prepare("INSERT INTO users (email, password_hash, role, status) VALUES (?, ?, 'user', 'pending') RETURNING *")
-      .get(email.trim().toLowerCase(), passwordHash) as UserRow;
-    seedDefaultCategories(db, row.id);
-    return row;
-  })();
+export async function createPendingUser(db: DB, email: string, passwordHash: string): Promise<UserRecord> {
+  const normalized = email.trim().toLowerCase();
+  await batch(db, [
+    {
+      sql: "INSERT INTO users (email, password_hash, role, status) VALUES (?, ?, 'user', 'pending')",
+      args: [normalized, passwordHash],
+    },
+    ...defaultCategoryStatements("(SELECT id FROM users WHERE email = ?)", [normalized]),
+  ]);
+  return (await getUserByEmail(db, normalized))!;
 }
 
-export function listUsers(db: DB, status?: UserStatus): AdminUser[] {
-  const rows = db
-    .prepare(
-      `SELECT * FROM users WHERE role = 'user' AND (? IS NULL OR status = ?)
-       ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'active' THEN 1 ELSE 2 END, created_at DESC`,
-    )
-    .all(status ?? null, status ?? null) as UserRow[];
+export async function listUsers(db: DB, status?: UserStatus): Promise<AdminUser[]> {
+  const rows = await all<UserRow>(
+    db,
+    `SELECT * FROM users WHERE role = 'user' AND (? IS NULL OR status = ?)
+     ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'active' THEN 1 ELSE 2 END, created_at DESC`,
+    [status ?? null, status ?? null],
+  );
   return rows.map(toAdminUser);
 }
 
-export function countUsersByStatus(db: DB): Record<UserStatus, number> {
+export async function countUsersByStatus(db: DB): Promise<Record<UserStatus, number>> {
   const counts: Record<UserStatus, number> = { pending: 0, active: 0, rejected: 0 };
-  const rows = db.prepare("SELECT status, COUNT(*) AS n FROM users WHERE role = 'user' GROUP BY status").all() as { status: UserStatus; n: number }[];
+  const rows = await all<{ status: UserStatus; n: number }>(db, "SELECT status, COUNT(*) AS n FROM users WHERE role = 'user' GROUP BY status");
   for (const r of rows) counts[r.status] = r.n;
   return counts;
 }
@@ -72,97 +75,94 @@ export function countUsersByStatus(db: DB): Record<UserStatus, number> {
  * Changes an account's approval status. Anything other than "active" also bumps
  * session_version, which immediately invalidates every existing session of that user.
  */
-export function setUserStatus(db: DB, id: number, status: UserStatus): UserRecord | null {
+export async function setUserStatus(db: DB, id: number, status: UserStatus): Promise<UserRecord | null> {
   return (
-    (db
-      .prepare(
-        `UPDATE users SET status = ?, reviewed_at = ${NOW}, updated_at = ${NOW},
-           session_version = session_version + CASE WHEN ? = 'active' THEN 0 ELSE 1 END
-         WHERE id = ? AND role = 'user' RETURNING *`,
-      )
-      .get(status, status, id) as UserRow | undefined) ?? null
+    (await get<UserRow>(
+      db,
+      `UPDATE users SET status = ?, reviewed_at = ${NOW}, updated_at = ${NOW},
+         session_version = session_version + CASE WHEN ? = 'active' THEN 0 ELSE 1 END
+       WHERE id = ? AND role = 'user' RETURNING *`,
+      [status, status, id],
+    )) ?? null
   );
 }
 
-export function touchLogin(db: DB, id: number): void {
-  db.prepare(`UPDATE users SET last_login_at = ${NOW} WHERE id = ?`).run(id);
+export async function touchLogin(db: DB, id: number): Promise<void> {
+  await run(db, `UPDATE users SET last_login_at = ${NOW} WHERE id = ?`, [id]);
 }
 
-/** Removes a user and every row of their financial data (explicit order; no reliance on cascades). */
-export function deleteUserAndData(db: DB, id: number): boolean {
-  return db.transaction(() => {
-    const user = db.prepare("SELECT role FROM users WHERE id = ?").get(id) as { role: UserRole } | undefined;
-    if (!user || user.role !== "user") return false;
-    db.prepare("DELETE FROM expenses WHERE user_id = ?").run(id);
-    db.prepare("DELETE FROM plan_budgets WHERE plan_id IN (SELECT id FROM monthly_plans WHERE user_id = ?)").run(id);
-    db.prepare("DELETE FROM monthly_plans WHERE user_id = ?").run(id);
-    db.prepare("DELETE FROM settings WHERE user_id = ?").run(id);
-    db.prepare("DELETE FROM categories WHERE user_id = ?").run(id);
-    return db.prepare("DELETE FROM users WHERE id = ?").run(id).changes > 0;
-  })();
-}
-
-/** Data created before accounts existed (user_id NULL) is handed to the admin. */
-function claimUnownedData(db: DB, userId: number): number {
-  let claimed = 0;
-  for (const table of ["categories", "monthly_plans", "expenses", "settings"]) {
-    claimed += db.prepare(`UPDATE ${table} SET user_id = ? WHERE user_id IS NULL`).run(userId).changes;
-  }
-  return claimed;
+/** Removes a user and every row of their financial data, children first, in one atomic batch. */
+export async function deleteUserAndData(db: DB, id: number): Promise<boolean> {
+  const user = await get<{ role: UserRole }>(db, "SELECT role FROM users WHERE id = ?", [id]);
+  if (!user || user.role !== "user") return false;
+  await batch(db, [
+    { sql: "DELETE FROM expenses WHERE user_id = ?", args: [id] },
+    ...deletePlansStatements(id),
+    { sql: "DELETE FROM settings WHERE user_id = ?", args: [id] },
+    { sql: "DELETE FROM categories WHERE user_id = ?", args: [id] },
+    { sql: "DELETE FROM users WHERE id = ? AND role = 'user'", args: [id] },
+  ]);
+  return true;
 }
 
 /**
  * Creates or updates the single administrator account. If a different account was admin,
  * it is renamed to the new email so the admin's financial data stays with the admin.
- * Returns what happened, for logging.
+ * Data created before accounts existed (user_id NULL) is handed to the admin.
  */
-export function ensureAdmin(db: DB, email: string, passwordHash: string): { action: "created" | "updated" | "promoted"; claimed: number } {
+export async function ensureAdmin(
+  db: DB,
+  email: string,
+  passwordHash: string,
+): Promise<{ action: "created" | "updated" | "promoted"; claimed: number }> {
   const normalized = email.trim().toLowerCase();
-  return db.transaction(() => {
-    const existingAdmin = getAdmin(db);
-    const byEmail = getUserByEmail(db, normalized);
-    let adminId: number;
-    let action: "created" | "updated" | "promoted";
+  const [existingAdmin, byEmail] = await Promise.all([getAdmin(db), getUserByEmail(db, normalized)]);
+  const statements: InStatement[] = [];
+  let action: "created" | "updated" | "promoted";
 
-    if (byEmail && byEmail.role === "admin") {
-      db.prepare(`UPDATE users SET password_hash = ?, status = 'active', updated_at = ${NOW} WHERE id = ?`).run(passwordHash, byEmail.id);
-      adminId = byEmail.id;
-      action = "updated";
-    } else if (byEmail) {
-      // A registered user becomes the administrator; the old admin (if any) becomes a normal user.
-      if (existingAdmin) db.prepare(`UPDATE users SET role = 'user', updated_at = ${NOW} WHERE id = ?`).run(existingAdmin.id);
-      db.prepare(
-        `UPDATE users SET role = 'admin', status = 'active', password_hash = ?, session_version = session_version + 1,
-           reviewed_at = COALESCE(reviewed_at, ${NOW}), updated_at = ${NOW} WHERE id = ?`,
-      ).run(passwordHash, byEmail.id);
-      adminId = byEmail.id;
-      action = "promoted";
-    } else if (existingAdmin) {
-      db.prepare(
-        `UPDATE users SET email = ?, password_hash = ?, session_version = session_version + 1, updated_at = ${NOW} WHERE id = ?`,
-      ).run(normalized, passwordHash, existingAdmin.id);
-      adminId = existingAdmin.id;
-      action = "updated";
-    } else {
-      const row = db
-        .prepare(`INSERT INTO users (email, password_hash, role, status, reviewed_at) VALUES (?, ?, 'admin', 'active', ${NOW}) RETURNING id`)
-        .get(normalized, passwordHash) as { id: number };
-      adminId = row.id;
-      action = "created";
-    }
+  if (byEmail && byEmail.role === "admin") {
+    statements.push({ sql: `UPDATE users SET password_hash = ?, status = 'active', updated_at = ${NOW} WHERE id = ?`, args: [passwordHash, byEmail.id] });
+    action = "updated";
+  } else if (byEmail) {
+    // A registered user becomes the administrator; the old admin (if any) becomes a normal user.
+    if (existingAdmin) statements.push({ sql: `UPDATE users SET role = 'user', updated_at = ${NOW} WHERE id = ?`, args: [existingAdmin.id] });
+    statements.push({
+      sql: `UPDATE users SET role = 'admin', status = 'active', password_hash = ?, session_version = session_version + 1,
+              reviewed_at = COALESCE(reviewed_at, ${NOW}), updated_at = ${NOW} WHERE id = ?`,
+      args: [passwordHash, byEmail.id],
+    });
+    action = "promoted";
+  } else if (existingAdmin) {
+    statements.push({
+      sql: `UPDATE users SET email = ?, password_hash = ?, session_version = session_version + 1, updated_at = ${NOW} WHERE id = ?`,
+      args: [normalized, passwordHash, existingAdmin.id],
+    });
+    action = "updated";
+  } else {
+    statements.push({
+      sql: `INSERT INTO users (email, password_hash, role, status, reviewed_at) VALUES (?, ?, 'admin', 'active', ${NOW})`,
+      args: [normalized, passwordHash],
+    });
+    action = "created";
+  }
 
-    const claimed = claimUnownedData(db, adminId);
-    const hasCategories = db.prepare("SELECT 1 FROM categories WHERE user_id = ? LIMIT 1").get(adminId);
-    if (!hasCategories) seedDefaultCategories(db, adminId);
-    return { action, claimed };
-  })();
+  const counts = await get<{ n: number }>(
+    db,
+    `SELECT (SELECT COUNT(*) FROM categories WHERE user_id IS NULL) + (SELECT COUNT(*) FROM monthly_plans WHERE user_id IS NULL)
+          + (SELECT COUNT(*) FROM expenses WHERE user_id IS NULL) + (SELECT COUNT(*) FROM settings WHERE user_id IS NULL) AS n`,
+  );
+  const adminId = "(SELECT id FROM users WHERE role = 'admin')";
+  for (const table of ["categories", "monthly_plans", "expenses", "settings"]) {
+    statements.push({ sql: `UPDATE ${table} SET user_id = ${adminId} WHERE user_id IS NULL`, args: [] });
+  }
+  // A brand-new admin still needs categories; INSERT OR IGNORE skips ones the admin already has.
+  statements.push(...defaultCategoryStatements(adminId, []));
+  await batch(db, statements);
+  return { action, claimed: counts?.n ?? 0 };
 }
 
 /** Session-signing secret persisted in the DB when SESSION_SECRET isn't configured. */
-export function getOrCreateSecret(db: DB, key: string, generate: () => string): string {
-  const row = db.prepare("SELECT value FROM app_secrets WHERE key = ?").get(key) as { value: string } | undefined;
-  if (row) return row.value;
-  const value = generate();
-  db.prepare("INSERT INTO app_secrets (key, value) VALUES (?, ?)").run(key, value);
-  return value;
+export async function getOrCreateSecret(db: DB, key: string, generate: () => string): Promise<string> {
+  await run(db, "INSERT OR IGNORE INTO app_secrets (key, value) VALUES (?, ?)", [key, generate()]);
+  return (await get<{ value: string }>(db, "SELECT value FROM app_secrets WHERE key = ?", [key]))!.value;
 }

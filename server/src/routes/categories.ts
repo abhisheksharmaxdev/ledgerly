@@ -9,17 +9,17 @@ import { parseOrThrow } from "../utils/validate";
 export function categoriesRouter(db: DB): Router {
   const r = Router();
 
-  r.get("/", (req, res) => {
-    res.json(listCategories(db, userId(req)));
+  r.get("/", async (req, res) => {
+    res.json(await listCategories(db, userId(req)));
   });
 
-  r.post("/", (req, res) => {
-    res.status(201).json(createCategory(db, userId(req), parseOrThrow(categoryCreateSchema, req.body)));
+  r.post("/", async (req, res) => {
+    res.status(201).json(await createCategory(db, userId(req), parseOrThrow(categoryCreateSchema, req.body)));
   });
 
   // Categories are archived rather than deleted, so historical expenses keep their meaning.
-  r.patch("/:id", (req, res) => {
-    res.json(updateCategory(db, userId(req), idParam(req), parseOrThrow(categoryUpdateSchema, req.body)));
+  r.patch("/:id", async (req, res) => {
+    res.json(await updateCategory(db, userId(req), idParam(req), parseOrThrow(categoryUpdateSchema, req.body)));
   });
 
   return r;

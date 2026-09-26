@@ -53,15 +53,19 @@ export function readCookie(req: Request, name: string): string | undefined {
  * session_version still matches are accepted, so rejection/deletion takes effect immediately.
  */
 export function loadSessionUser(db: DB, secret: string) {
-  return (req: Request, _res: Response, next: NextFunction) => {
-    const payload = verifySessionToken(readCookie(req, SESSION_COOKIE), secret);
-    if (payload) {
-      const user = getUserById(db, payload.uid);
-      if (user && user.status === "active" && user.session_version === payload.sv) {
-        req.user = { id: user.id, email: user.email, role: user.role };
+  return async (req: Request, _res: Response, next: NextFunction) => {
+    try {
+      const payload = verifySessionToken(readCookie(req, SESSION_COOKIE), secret);
+      if (payload) {
+        const user = await getUserById(db, payload.uid);
+        if (user && user.status === "active" && user.session_version === payload.sv) {
+          req.user = { id: user.id, email: user.email, role: user.role };
+        }
       }
+      next();
+    } catch (err) {
+      next(err);
     }
-    next();
   };
 }
 

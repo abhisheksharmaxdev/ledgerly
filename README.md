@@ -31,10 +31,10 @@ Amounts are in Indian Rupees (₹) by default and are stored as integer paise, s
 | Frontend | React 19, TypeScript, Vite, React Router, TanStack Query (server state), Zustand (UI state), Radix Dialog, Sonner toasts, Lucide icons |
 | Visualization | Recharts, three.js (background), Motion (animations), CSS 3D transforms |
 | Backend | Node.js, Express 5, Zod validation (schemas shared with the frontend), Helmet, express-rate-limit, Nodemailer |
-| Database | SQLite via better-sqlite3, with versioned SQL migrations and no ORM |
+| Database | libSQL (SQLite-compatible): a local file in development, a hosted Turso database in production. Versioned SQL migrations, no ORM |
 | Authentication | Email + password, scrypt password hashing, HMAC-signed HttpOnly session cookie |
 | Testing | Vitest, Supertest |
-| Deployment | Single Node service (Docker), Render blueprint, Docker Compose |
+| Deployment | Single Node service (Docker) on Render's free plan + Turso free database; Docker Compose for self-hosting |
 
 ## Key functionality
 
@@ -86,7 +86,7 @@ Amounts are in Indian Rupees (₹) by default and are stored as integer paise, s
 ├── shared/                 code used by both sides: constants, Zod schemas, money/date helpers, API types
 ├── tests/                  API, migration and money/date tests
 ├── scripts/                server bundler, password hash generator
-├── data/                   SQLite database (git-ignored)
+├── data/                   local SQLite database for development (git-ignored)
 ├── Dockerfile, docker-compose.yml, render.yaml
 └── .env.example
 ```
@@ -115,7 +115,7 @@ npm run dev
 
 Open <http://localhost:5173> and sign in with the admin account. The API runs on <http://localhost:4000>.
 
-The repository's `.npmrc` sets `ignore-scripts=true`. better-sqlite3 ships prebuilt binaries, but npm would otherwise try to compile it from source, which needs a C++ toolchain.
+The repository's `.npmrc` sets `ignore-scripts=true`. No dependency needs an install script (the database driver ships prebuilt binaries), and skipping them keeps packages from running code during install.
 
 ### Useful scripts
 
@@ -131,7 +131,7 @@ The repository's `.npmrc` sets `ignore-scripts=true`. better-sqlite3 ships prebu
 | `npm run db:seed [-- user@example.com]` | Add demo data to an account (default: the admin) |
 | `npm run db:unseed [-- user@example.com]` | Remove demo data from that account |
 | `npm run db:migrate` | Apply migrations (also runs on every start) |
-| `npm run db:reset -- --yes` | Delete the database, including all accounts (stop the server first) |
+| `npm run db:reset -- --yes` | Delete the local database file, including all accounts (stop the server first) |
 
 ## Environment variables
 
@@ -143,7 +143,9 @@ Everything is read by the server only; nothing here is sent to the browser. [.en
 | `PORT` | `4000` | Port in production (hosting platforms set this) |
 | `API_PORT` | `4000` | API port in development (Vite proxies `/api` to it) |
 | `HOST` | `127.0.0.1` dev / `0.0.0.0` prod | Interface to bind |
-| `DATABASE_PATH` | `data/ledgerly.db` | SQLite file; must be on persistent storage in production |
+| `DATABASE_PATH` | `data/ledgerly.db` | Local SQLite file, used when `DATABASE_URL` is empty (development, self-hosting) |
+| `DATABASE_URL` | empty | Turso database URL (`libsql://…`) for production |
+| `DATABASE_AUTH_TOKEN` | empty | Turso auth token; required with a remote `DATABASE_URL` |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH` | empty | Admin account for server deployments (set both). The hash comes from `npm run hash-password`, never the plain password |
 | `SESSION_SECRET` | auto | 32+ random characters for signing sessions. If empty, one is generated once and stored in the database |
 | `SESSION_TTL_DAYS` | `7` | Login lifetime |
@@ -156,7 +158,12 @@ Everything is read by the server only; nothing here is sent to the browser. [.en
 
 ## Database setup
 
-There's nothing to set up by hand. On start, the server opens (or creates) the SQLite file at `DATABASE_PATH`, turns on WAL mode and foreign keys, and applies any pending migrations from `server/src/db/migrations.ts`. Migrations are append-only and each one runs in a transaction.
+There's nothing to set up by hand. The app talks to [libSQL](https://github.com/tursodatabase/libsql), the SQLite-compatible engine behind Turso, so the same code works with a local file and a hosted database:
+
+- **Locally**, it opens (or creates) the SQLite file at `DATABASE_PATH`.
+- **In production**, it connects to the Turso database in `DATABASE_URL`.
+
+Either way, pending migrations from `server/src/db/migrations.ts` run on start. Migrations are append-only, and each one runs as a single atomic batch. Multi-step writes (saving a plan, imports, restores, deleting an account) are sent as atomic batches too, so they either fully apply or not at all.
 
 Main tables:
 
@@ -180,43 +187,66 @@ Users who forget their password currently have to ask the admin, who can delete 
 
 ## Deployment
 
-Ledgerly deploys as **one service with a persistent disk**. The same Node process serves the API and the frontend, and SQLite stores its data in a single file. Hosts with ephemeral filesystems, such as Vercel or Netlify functions, aren't suitable, because the database would be lost on every deploy.
+Ledgerly deploys as **one web service plus a hosted database**:
+
+- **Frontend:** Vite builds the React app into static files in `dist/client`. There's no separate frontend host; the Node server serves these files.
+- **Backend:** the Express API, bundled into `dist/server/index.js` and run with Node (in Docker on Render).
+- **Database:** a Turso database (hosted libSQL). The web service itself stores nothing, which is what makes free hosting possible: Render's free plan has no persistent disk.
+
+Because the frontend and API share one origin, there's no CORS to configure.
 
 | | |
 |---|---|
 | Build command | `npm ci && npm run build` (devDependencies are needed to build) |
 | Start command | `npm start` (or `node dist/server/index.js`) |
 | Health check | `GET /api/health` |
-| Required env | `NODE_ENV=production`, `DATABASE_PATH` on a persistent disk, `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH` |
+| Required env | `NODE_ENV=production`, `DATABASE_URL`, `DATABASE_AUTH_TOKEN`, `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH` |
 | Recommended env | `SESSION_SECRET`, SMTP settings, `APP_URL` |
 
-Generate the admin hash and a session secret locally:
+### Free setup: Turso + Render
+
+**1. Create the database (Turso)**
+
+1. Sign up at [turso.tech](https://turso.tech) and create a database in the dashboard. Pick the region closest to where you'll run the app.
+2. Copy the database URL (`libsql://<database>-<organisation>.turso.io`).
+3. Create an auth token for it (**Generate token** in the dashboard, or `turso db tokens create <database>` with the CLI).
+
+The tables are created automatically the first time the app starts.
+
+**2. Generate the admin password hash** (on your computer):
 
 ```bash
 npm run hash-password -- "a long, unique admin password"
 ```
 
-### Render (Docker blueprint)
+**3. Deploy the app (Render)**
 
 1. Push the repository to GitHub.
-2. In Render choose **New → Blueprint** and select the repository. [`render.yaml`](render.yaml) creates a Docker web service with a 1 GB disk mounted at `/data` (disks need a paid instance type).
-3. Fill in `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH` and, optionally, the SMTP variables and `APP_URL`. `SESSION_SECRET` is generated automatically.
-4. Deploy, then sign in with the admin account.
+2. In Render choose **New → Blueprint** and select the repository. [`render.yaml`](render.yaml) creates a free Docker web service.
+3. Fill in `DATABASE_URL`, `DATABASE_AUTH_TOKEN`, `ADMIN_EMAIL` and `ADMIN_PASSWORD_HASH`. Optionally add the SMTP values, and `APP_URL` once you know your `.onrender.com` address. `SESSION_SECRET` is generated for you.
+4. Deploy, open the URL and sign in with the admin account.
 
-### Any Docker host (Railway, Fly.io, a VPS)
+Free Render services go to sleep after a period without traffic, so the first visit after a quiet spell takes a little while to load. Your data isn't affected, because it's in Turso. Check both providers' pricing pages for current free-tier limits.
 
-The [`Dockerfile`](Dockerfile) is a two-stage build. The final image contains only the built output and the runtime dependencies, listens on `PORT` (default 8080) and stores data in `/data`.
+**Moving existing data.** Your local database isn't uploaded anywhere. To move it, sign in locally and use **Settings → Data → Full JSON backup**, then **Restore JSON backup** on the live site.
+
+### Other hosts
+
+The [`Dockerfile`](Dockerfile) is a two-stage build. The final image contains only the built output and the runtime dependencies, and listens on `PORT` (default 8080). It runs anywhere Docker does (Railway, Fly.io, a VPS). Set the same environment variables:
 
 ```bash
 docker build -t ledgerly .
-docker run -d -p 8080:8080 -v ledgerly-data:/data \
-  -e ADMIN_EMAIL="you@example.com" -e ADMIN_PASSWORD_HASH="..." -e SESSION_SECRET="..." \
+docker run -d -p 8080:8080 \
+  -e DATABASE_URL="libsql://…" -e DATABASE_AUTH_TOKEN="…" \
+  -e ADMIN_EMAIL="you@example.com" -e ADMIN_PASSWORD_HASH="…" -e SESSION_SECRET="…" \
   ledgerly
 ```
 
-On Railway or Fly.io, attach a volume at `/data` and set the same variables. The image doesn't include the development tooling, so configure the admin through environment variables rather than `npm run create-admin`.
+The image doesn't include the development tooling, so configure the admin through environment variables rather than `npm run create-admin`.
 
 ### Self-hosting with Docker Compose
+
+Without `DATABASE_URL`, the app keeps using a local SQLite file, which suits a home server:
 
 ```bash
 docker compose up -d --build     # http://localhost:8080, data stored in ./data
@@ -226,7 +256,7 @@ The compose file assumes plain HTTP with no proxy in front (`COOKIE_SECURE=false
 
 ### Backups
 
-Use **Settings → Data → Full JSON backup** for your own account, or copy the database file while the app is stopped.
+Use **Settings → Data → Full JSON backup** for your own account. For a local database, you can also copy the file while the app is stopped.
 
 ## Security considerations
 
@@ -237,7 +267,7 @@ Use **Settings → Data → Full JSON backup** for your own account, or copy the
 - Helmet sets a strict Content Security Policy (scripts only from the app's own origin), HSTS and related headers.
 - Errors returned to the client never include stack traces or SQL. Details are logged on the server only.
 - CSV exports neutralise spreadsheet formula injection, and imports are size-limited and validated row by row.
-- Secrets (admin hash, session secret, SMTP credentials) live in environment variables. `.env` and database files are git-ignored.
+- Secrets (database token, admin hash, session secret, SMTP credentials) live in environment variables on the server and never reach the browser. `.env` and database files are git-ignored.
 
 ## Testing
 
@@ -253,7 +283,7 @@ The suite runs against an in-memory database. It covers expense CRUD and validat
 - Recurring expenses (rent, subscriptions) that pre-fill each month.
 - Per-category trend charts and year-over-year comparisons.
 - An installable offline mode (PWA) for adding expenses without a connection.
-- Optional PostgreSQL support for running more than one app instance.
+- Per-user rate limits and audit logs for admin actions.
 
 ## License
 

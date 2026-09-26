@@ -1,16 +1,19 @@
 # Render Blueprint: New → Blueprint → select this repo.
-# One web service runs the API and serves the built frontend; SQLite lives on a persistent disk.
+# One free web service runs the API and serves the built frontend. Data lives in a Turso
+# (hosted libSQL) database, so no persistent disk is needed.
 services:
   - type: web
     name: ledgerly
     runtime: docker
-    plan: starter # persistent disks require a paid instance type
+    plan: free
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
-      - key: DATABASE_PATH
-        value: /data/ledgerly.db
+      - key: DATABASE_URL
+        sync: false # libsql://<your-db>-<your-org>.turso.io
+      - key: DATABASE_AUTH_TOKEN
+        sync: false # from `turso db tokens create <db>` or the Turso dashboard
       - key: ADMIN_EMAIL
         sync: false # your admin login email
       - key: ADMIN_PASSWORD_HASH
@@ -27,7 +30,3 @@ services:
         sync: false
       - key: SESSION_SECRET
         generateValue: true
-    disk:
-      name: ledgerly-data
-      mountPath: /data
-      sizeGB: 1

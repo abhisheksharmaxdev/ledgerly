@@ -13,30 +13,28 @@ import { parseOrThrow } from "../utils/validate";
 export function plansRouter(db: DB): Router {
   const r = Router();
 
-  r.get("/:month", (req, res) => {
+  r.get("/:month", async (req, res) => {
     const month = monthParam(req);
-    const plan = getPlan(db, userId(req), month);
+    const uid = userId(req);
     const prev = monthBounds(shiftMonth(month, -1));
+    const [plan, previousSpend] = await Promise.all([getPlan(db, uid, month), totalsByCategory(db, uid, prev.start, prev.end)]);
     const body: PlanResponse = {
       month,
       plan,
-      suggestion: plan ? null : latestPlanBefore(db, userId(req), month),
-      previousMonthSpend: totalsByCategory(db, userId(req), prev.start, prev.end).map((t) => ({
-        categoryId: t.categoryId,
-        amountMinor: t.totalMinor,
-      })),
+      suggestion: plan ? null : await latestPlanBefore(db, uid, month),
+      previousMonthSpend: previousSpend.map((t) => ({ categoryId: t.categoryId, amountMinor: t.totalMinor })),
     };
     res.json(body);
   });
 
-  r.put("/:month", (req, res) => {
+  r.put("/:month", async (req, res) => {
     const month = monthParam(req);
     const input = parseOrThrow(planInputSchema, req.body);
-    res.json(upsertPlan(db, userId(req), month, input));
+    res.json(await upsertPlan(db, userId(req), month, input));
   });
 
-  r.delete("/:month", (req, res) => {
-    if (!deletePlan(db, userId(req), monthParam(req))) throw notFound("No plan exists for this month");
+  r.delete("/:month", async (req, res) => {
+    if (!(await deletePlan(db, userId(req), monthParam(req)))) throw notFound("No plan exists for this month");
     res.status(204).end();
   });
 

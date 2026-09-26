@@ -9,13 +9,19 @@ import { periodOf } from "./summary";
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-export function buildMonthAnalytics(db: DB, userId: number, month: string, today: string): MonthAnalytics {
+export async function buildMonthAnalytics(db: DB, userId: number, month: string, today: string): Promise<MonthAnalytics> {
   const { start, end, days } = monthBounds(month);
   const period = periodOf(month, today);
   const lastCountedDay = period === "past" ? days : period === "current" ? Number(today.slice(8, 10)) : 0;
 
+  const [dailyRows, paymentRows, largest] = await Promise.all([
+    dailyTotals(db, userId, start, end),
+    paymentTotals(db, userId, start, end),
+    largestExpense(db, userId, start, end),
+  ]);
+
   const byDate = new Map<string, { spent: number; saved: number; count: number }>();
-  for (const row of dailyTotals(db, userId, start, end)) {
+  for (const row of dailyRows) {
     const d = byDate.get(row.date) ?? { spent: 0, saved: 0, count: 0 };
     if (row.kind === "savings") d.saved += row.totalMinor;
     else d.spent += row.totalMinor;
@@ -43,7 +49,7 @@ export function buildMonthAnalytics(db: DB, userId: number, month: string, today
     }
   }
 
-  const payRows = new Map(paymentTotals(db, userId, start, end).map((r) => [r.method ?? "none", r]));
+  const payRows = new Map(paymentRows.map((r) => [r.method ?? "none", r]));
   const paymentMethods: PaymentBreakdown[] = [
     ...PAYMENT_METHODS.map((p) => ({ method: p.value, label: p.label })),
     { method: "none" as const, label: "Unspecified" },
@@ -65,15 +71,18 @@ export function buildMonthAnalytics(db: DB, userId: number, month: string, today
       weekendDays,
     },
     byWeekday: WEEKDAY_ORDER.map((dow) => ({ dow, label: WEEKDAY_LABELS[dow], amountMinor: weekdayTotals[dow] })),
-    largestExpense: largestExpense(db, userId, start, end),
+    largestExpense: largest,
   };
 }
 
 /** Spending/saving/income for `count` months ending at `endMonth` (inclusive). */
-export function buildTrend(db: DB, userId: number, endMonth: string, count: number): TrendPoint[] {
+export async function buildTrend(db: DB, userId: number, endMonth: string, count: number): Promise<TrendPoint[]> {
   const firstMonth = shiftMonth(endMonth, -(count - 1));
-  const totals = monthlyTotals(db, userId, `${firstMonth}-01`, monthBounds(endMonth).end);
-  const plans = new Map(planTotals(db, userId).map((p) => [p.month, p]));
+  const [totals, planRows] = await Promise.all([
+    monthlyTotals(db, userId, `${firstMonth}-01`, monthBounds(endMonth).end),
+    planTotals(db, userId),
+  ]);
+  const plans = new Map(planRows.map((p) => [p.month, p]));
   const points: TrendPoint[] = [];
   for (let i = 0; i < count; i++) {
     const month = shiftMonth(firstMonth, i);
@@ -93,7 +102,8 @@ export function buildTrend(db: DB, userId: number, endMonth: string, count: numb
 }
 
 /** Every month that has a plan or at least one expense, newest first. */
-export function listMonths(db: DB, userId: number): MonthListItem[] {
+export async function listMonths(db: DB, userId: number): Promise<MonthListItem[]> {
+  const [planRows, totalRows] = await Promise.all([planTotals(db, userId), monthlyTotals(db, userId)]);
   const map = new Map<string, MonthListItem>();
   const get = (month: string) => {
     let item = map.get(month);
@@ -103,8 +113,8 @@ export function listMonths(db: DB, userId: number): MonthListItem[] {
     }
     return item;
   };
-  for (const p of planTotals(db, userId)) Object.assign(get(p.month), { hasPlan: true, incomeMinor: p.incomeMinor });
-  for (const t of monthlyTotals(db, userId)) {
+  for (const p of planRows) Object.assign(get(p.month), { hasPlan: true, incomeMinor: p.incomeMinor });
+  for (const t of totalRows) {
     const item = get(t.month);
     if (t.kind === "savings") item.savedMinor += t.totalMinor;
     else item.spentMinor += t.totalMinor;
@@ -112,4 +122,3 @@ export function listMonths(db: DB, userId: number): MonthListItem[] {
   }
   return [...map.values()].sort((a, b) => (a.month < b.month ? 1 : -1));
 }
-

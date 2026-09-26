@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 // Load .env from the project root when present (Node >= 20.12 built-in, no dotenv dependency).
 const envFile = path.resolve(process.cwd(), ".env");
@@ -22,7 +23,14 @@ export const config = {
   // the Vite dev server can't collide with the API.
   port: Number((isProd ? process.env.PORT : process.env.API_PORT) ?? 4000),
   host: process.env.HOST ?? (isProd ? "0.0.0.0" : "127.0.0.1"),
-  databasePath: path.resolve(process.cwd(), process.env.DATABASE_PATH ?? "data/ledgerly.db"),
+  /**
+   * libSQL connection URL. Production uses a Turso database (libsql://…); locally it falls back
+   * to a SQLite file at DATABASE_PATH.
+   */
+  databaseUrl:
+    process.env.DATABASE_URL?.trim() ||
+    pathToFileURL(path.resolve(process.cwd(), process.env.DATABASE_PATH ?? "data/ledgerly.db")).href,
+  databaseAuthToken: process.env.DATABASE_AUTH_TOKEN?.trim() ?? "",
   /** The single administrator (optional here; `npm run create-admin` works too). */
   adminEmail: process.env.ADMIN_EMAIL?.trim().toLowerCase() ?? "",
   /** scrypt hash produced by `npm run hash-password`, never the plain password. */
@@ -51,6 +59,9 @@ export type AppConfig = typeof config;
 
 export function validateConfig(cfg: AppConfig): string[] {
   const problems: string[] = [];
+  if (/^(libsql|https?|wss?):/.test(cfg.databaseUrl) && !cfg.databaseAuthToken && !/localhost|127\.0\.0\.1/.test(cfg.databaseUrl)) {
+    problems.push("DATABASE_AUTH_TOKEN is required for a remote (Turso) DATABASE_URL.");
+  }
   if (!!cfg.adminEmail !== !!cfg.adminPasswordHash) {
     problems.push("Set both ADMIN_EMAIL and ADMIN_PASSWORD_HASH, or neither (then use `npm run create-admin`).");
   }

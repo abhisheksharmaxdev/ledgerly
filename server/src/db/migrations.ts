@@ -1,4 +1,4 @@
-import type Database from "better-sqlite3";
+import type { Client, InStatement } from "@libsql/client";
 import { DEFAULT_CATEGORIES, PAYMENT_METHOD_VALUES } from "../../../shared/constants";
 
 const NOW = "(strftime('%Y-%m-%dT%H:%M:%fZ','now'))";
@@ -9,16 +9,23 @@ interface Migration {
   name: string;
   /** Table rebuilds need foreign keys off (SQLite's documented 12-step ALTER procedure). */
   foreignKeysOff?: boolean;
-  up: (db: Database.Database) => void;
+  statements: () => InStatement[];
 }
+
+/** Splits a migration script into statements (the scripts contain no semicolons inside literals). */
+const script = (sql: string): string[] =>
+  sql
+    .split(/;\s*(?:\n|$)/)
+    .map((stmt) => stmt.trim())
+    .filter(Boolean);
 
 /** Append-only list. Never edit a migration that has shipped; add a new one instead. */
 export const migrations: Migration[] = [
   {
     version: 1,
     name: "initial schema",
-    up(db) {
-      db.exec(`
+    statements: () => [
+      ...script(`
         CREATE TABLE categories (
           id          INTEGER PRIMARY KEY AUTOINCREMENT,
           slug        TEXT    NOT NULL UNIQUE,
@@ -70,22 +77,21 @@ export const migrations: Migration[] = [
           key   TEXT PRIMARY KEY,
           value TEXT NOT NULL
         ) WITHOUT ROWID;
-      `);
-
-      const insert = db.prepare(
-        "INSERT INTO categories (slug, name, color, icon, kind, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
-      );
-      DEFAULT_CATEGORIES.forEach((c, i) => insert.run(c.slug, c.name, c.color, c.icon, c.kind, (i + 1) * 10));
-    },
+      `),
+      ...DEFAULT_CATEGORIES.map((c, i) => ({
+        sql: "INSERT INTO categories (slug, name, color, icon, kind, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
+        args: [c.slug, c.name, c.color, c.icon, c.kind, (i + 1) * 10],
+      })),
+    ],
   },
   {
     version: 2,
     name: "multi-user accounts",
     foreignKeysOff: true,
-    up(db) {
-      // Existing rows keep their ids and get user_id = NULL ("unclaimed").
-      // They are invisible to everyone until the admin account is created, which claims them.
-      db.exec(`
+    // Existing rows keep their ids and get user_id = NULL ("unclaimed").
+    // They are invisible to everyone until the admin account is created, which claims them.
+    statements: () =>
+      script(`
         CREATE TABLE users (
           id              INTEGER PRIMARY KEY AUTOINCREMENT,
           email           TEXT    NOT NULL COLLATE NOCASE UNIQUE,
@@ -155,38 +161,46 @@ export const migrations: Migration[] = [
 
         ALTER TABLE expenses ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
         CREATE INDEX ix_expenses_user_date ON expenses (user_id, date);
-      `);
-    },
+      `),
   },
 ];
 
-export function runMigrations(db: Database.Database): number[] {
-  db.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+/** Applies pending migrations; each one runs as a single atomic batch. */
+export async function runMigrations(db: Client): Promise<number[]> {
+  await db.execute(`CREATE TABLE IF NOT EXISTS schema_migrations (
     version    INTEGER PRIMARY KEY,
     name       TEXT NOT NULL,
     applied_at TEXT NOT NULL DEFAULT ${NOW}
   )`);
-  const applied = new Set(
-    (db.prepare("SELECT version FROM schema_migrations").all() as { version: number }[]).map((r) => r.version),
-  );
+  const applied = new Set((await db.execute("SELECT version FROM schema_migrations")).rows.map((r) => Number(r.version)));
   const ran: number[] = [];
   for (const m of migrations) {
     if (applied.has(m.version)) continue;
-    // PRAGMA foreign_keys is a no-op inside a transaction, so toggle it around it.
-    if (m.foreignKeysOff) db.pragma("foreign_keys = OFF");
+    // PRAGMA foreign_keys can't change inside a transaction, so toggle it around the batch.
+    // Hosted libSQL may not honour per-connection pragmas; that's fine there because a new
+    // hosted database runs these rebuilds on empty tables.
+    if (m.foreignKeysOff) await pragma(db, "PRAGMA foreign_keys = OFF");
     try {
-      db.transaction(() => {
-        m.up(db);
-        if (m.foreignKeysOff) {
-          const broken = db.pragma("foreign_key_check") as unknown[];
-          if (broken.length) throw new Error(`Migration ${m.version} left ${broken.length} broken foreign keys`);
-        }
-        db.prepare("INSERT INTO schema_migrations (version, name) VALUES (?, ?)").run(m.version, m.name);
-      })();
+      await db.batch(
+        [...m.statements(), { sql: "INSERT INTO schema_migrations (version, name) VALUES (?, ?)", args: [m.version, m.name] }],
+        "write",
+      );
+      if (m.foreignKeysOff) {
+        const broken = (await pragma(db, "PRAGMA foreign_key_check"))?.rows.length ?? 0;
+        if (broken) throw new Error(`Migration ${m.version} left ${broken} broken foreign keys`);
+      }
     } finally {
-      if (m.foreignKeysOff) db.pragma("foreign_keys = ON");
+      if (m.foreignKeysOff) await pragma(db, "PRAGMA foreign_keys = ON");
     }
     ran.push(m.version);
   }
   return ran;
+}
+
+async function pragma(db: Client, sql: string) {
+  try {
+    return await db.execute(sql);
+  } catch {
+    return null;
+  }
 }

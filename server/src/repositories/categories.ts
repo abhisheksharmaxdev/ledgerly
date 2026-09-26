@@ -1,4 +1,4 @@
-import type { DB } from "../db/connection";
+import { all, get, run, type DB, type InStatement } from "../db/connection";
 import type { Category } from "../../../shared/types";
 import { DEFAULT_CATEGORIES, type CategoryKind } from "../../../shared/constants";
 import { conflict, notFound } from "../utils/errors";
@@ -32,20 +32,20 @@ const SELECT = `
   SELECT c.*, (SELECT COUNT(*) FROM expenses e WHERE e.category_id = c.id AND e.user_id = c.user_id) AS expense_count
   FROM categories c`;
 
-/** Gives a new account its own copy of the default categories. */
-export function seedDefaultCategories(db: DB, userId: number): void {
-  const insert = db.prepare(
-    "INSERT OR IGNORE INTO categories (user_id, slug, name, color, icon, kind, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)",
-  );
-  DEFAULT_CATEGORIES.forEach((c, i) => insert.run(userId, c.slug, c.name, c.color, c.icon, c.kind, (i + 1) * 10));
+/** Statements that give an account its own copy of the default categories. */
+export function defaultCategoryStatements(userIdSql: string, userIdArgs: (string | number)[]): InStatement[] {
+  return DEFAULT_CATEGORIES.map((c, i) => ({
+    sql: `INSERT OR IGNORE INTO categories (user_id, slug, name, color, icon, kind, sort_order) VALUES (${userIdSql}, ?, ?, ?, ?, ?, ?)`,
+    args: [...userIdArgs, c.slug, c.name, c.color, c.icon, c.kind, (i + 1) * 10],
+  }));
 }
 
-export function listCategories(db: DB, userId: number): Category[] {
-  return (db.prepare(`${SELECT} WHERE c.user_id = ? ORDER BY c.sort_order, c.id`).all(userId) as CategoryRow[]).map(toCategory);
+export async function listCategories(db: DB, userId: number): Promise<Category[]> {
+  return (await all<CategoryRow>(db, `${SELECT} WHERE c.user_id = ? ORDER BY c.sort_order, c.id`, [userId])).map(toCategory);
 }
 
-export function getCategory(db: DB, userId: number, id: number): Category | null {
-  const row = db.prepare(`${SELECT} WHERE c.id = ? AND c.user_id = ?`).get(id, userId) as CategoryRow | undefined;
+export async function getCategory(db: DB, userId: number, id: number): Promise<Category | null> {
+  const row = await get<CategoryRow>(db, `${SELECT} WHERE c.id = ? AND c.user_id = ?`, [id, userId]);
   return row ? toCategory(row) : null;
 }
 
@@ -60,42 +60,47 @@ function slugify(name: string): string {
 }
 
 function isUniqueViolation(err: unknown): boolean {
-  return typeof err === "object" && err !== null && "code" in err && String((err as { code: string }).code).startsWith("SQLITE_CONSTRAINT_UNIQUE");
+  const e = err as { code?: string; message?: string; cause?: { code?: string } } | null;
+  const text = `${e?.code ?? ""} ${e?.cause?.code ?? ""} ${e?.message ?? ""}`;
+  return text.includes("UNIQUE") || text.includes("SQLITE_CONSTRAINT_UNIQUE");
 }
 
-export function createCategory(
+export async function createCategory(
   db: DB,
   userId: number,
   input: { name: string; color: string; icon: string; kind: CategoryKind },
-): Category {
+): Promise<Category> {
   const base = slugify(input.name);
+  const taken = new Set(
+    (await all<{ slug: string }>(db, "SELECT slug FROM categories WHERE user_id = ?", [userId])).map((r) => r.slug),
+  );
   let slug = base;
-  const taken = db.prepare("SELECT 1 FROM categories WHERE user_id = ? AND slug = ?");
-  for (let i = 2; taken.get(userId, slug); i++) slug = `${base}-${i}`;
-  const { next } = db
-    .prepare("SELECT COALESCE(MAX(sort_order), 0) + 10 AS next FROM categories WHERE user_id = ?")
-    .get(userId) as { next: number };
+  for (let i = 2; taken.has(slug); i++) slug = `${base}-${i}`;
   try {
-    const info = db
-      .prepare("INSERT INTO categories (user_id, slug, name, color, icon, kind, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(userId, slug, input.name, input.color, input.icon, input.kind, next);
-    return getCategory(db, userId, Number(info.lastInsertRowid))!;
+    const row = await get<{ id: number }>(
+      db,
+      `INSERT INTO categories (user_id, slug, name, color, icon, kind, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order), 0) + 10 FROM categories WHERE user_id = ?))
+       RETURNING id`,
+      [userId, slug, input.name, input.color, input.icon, input.kind, userId],
+    );
+    return (await getCategory(db, userId, row!.id))!;
   } catch (err) {
     if (isUniqueViolation(err)) throw conflict(`A category named "${input.name}" already exists`);
     throw err;
   }
 }
 
-export function updateCategory(
+export async function updateCategory(
   db: DB,
   userId: number,
   id: number,
   patch: { name?: string; color?: string; icon?: string; archived?: boolean },
-): Category {
-  const existing = getCategory(db, userId, id);
+): Promise<Category> {
+  const existing = await getCategory(db, userId, id);
   if (!existing) throw notFound("Category not found");
   const sets: string[] = [];
-  const params: unknown[] = [];
+  const params: (string | number)[] = [];
   if (patch.name !== undefined) (sets.push("name = ?"), params.push(patch.name));
   if (patch.color !== undefined) (sets.push("color = ?"), params.push(patch.color));
   if (patch.icon !== undefined) (sets.push("icon = ?"), params.push(patch.icon));
@@ -105,13 +110,13 @@ export function updateCategory(
   if (sets.length) {
     sets.push("updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')");
     try {
-      db.prepare(`UPDATE categories SET ${sets.join(", ")} WHERE id = ? AND user_id = ?`).run(...params, id, userId);
+      await run(db, `UPDATE categories SET ${sets.join(", ")} WHERE id = ? AND user_id = ?`, [...params, id, userId]);
     } catch (err) {
       if (isUniqueViolation(err)) throw conflict(`A category named "${patch.name}" already exists`);
       throw err;
     }
   }
-  return getCategory(db, userId, id)!;
+  return (await getCategory(db, userId, id))!;
 }
 
 /** Resolves a category by id, slug or (case-insensitive) name — used by CSV import. */

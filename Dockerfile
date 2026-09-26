@@ -15,9 +15,9 @@ WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
-# SQLite lives on a mounted volume so data survives redeploys.
+# With DATABASE_URL pointing at Turso nothing is stored locally. Without it, the SQLite file goes
+# to /data, which docker-compose mounts as a volume so data survives rebuilds.
 RUN mkdir -p /data
-VOLUME ["/data"]
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
   CMD node -e "fetch('http://127.0.0.1:'+process.env.PORT+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
