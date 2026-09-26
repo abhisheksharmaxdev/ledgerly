@@ -1,0 +1,33 @@
+# Render Blueprint: New → Blueprint → select this repo.
+# One web service runs the API and serves the built frontend; SQLite lives on a persistent disk.
+services:
+  - type: web
+    name: ledgerly
+    runtime: docker
+    plan: starter # persistent disks require a paid instance type
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_PATH
+        value: /data/ledgerly.db
+      - key: ADMIN_EMAIL
+        sync: false # your admin login email
+      - key: ADMIN_PASSWORD_HASH
+        sync: false # paste the value printed by `npm run hash-password -- "your password"`
+      - key: APP_URL
+        sync: false # e.g. https://ledgerly.onrender.com (used in notification emails)
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+    disk:
+      name: ledgerly-data
+      mountPath: /data
+      sizeGB: 1

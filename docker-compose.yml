@@ -1,0 +1,22 @@
+# Self-host on any machine with Docker:  docker compose up -d --build
+# The app is then available at http://localhost:8080 and data lives in ./data
+services:
+  ledgerly:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: 8080
+      DATABASE_PATH: /data/ledgerly.db
+      # Plain-HTTP localhost/LAN access. Remove this line when you put HTTPS in front.
+      COOKIE_SECURE: "false"
+      # No reverse proxy in front, so don't trust X-Forwarded-For (it would let clients dodge
+      # the login rate limit). Set to 1 if you add a proxy such as Caddy or nginx.
+      TRUST_PROXY: ""
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
