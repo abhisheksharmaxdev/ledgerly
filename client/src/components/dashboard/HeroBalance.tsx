@@ -1,16 +1,22 @@
 import { Link } from "react-router";
-import { ArrowRight, CalendarDays } from "lucide-react";
+import { ArrowRight, CalendarDays, CreditCard } from "lucide-react";
 import { monthName } from "../../../../shared/dates";
+import { percent } from "../../../../shared/money";
 import type { MonthSummary } from "../../../../shared/types";
 import { useMoney } from "../../hooks";
 import { cn } from "../../utils/cn";
 import { Card } from "../ui/Card";
 import { AnimatedMoney } from "../ui/Money";
+import { ProgressBar } from "../ui/Progress";
 
 /** The first thing on screen: how much money is left this month, and why. */
 export function HeroBalance({ summary }: { summary: MonthSummary }) {
   const { fmt } = useMoney();
-  const { incomeMinor: income, spentMinor: spent, savedMinor: saved, remainingMinor: remaining } = summary;
+  const { incomeMinor: income, spentMinor: totalSpent, savedMinor: saved, remainingMinor: remaining } = summary;
+  // What came out of income; credit-card spending is shown against the card instead.
+  const spent = summary.spentFromIncomeMinor;
+  const hasCredit = summary.creditMinor > 0;
+  const creditUsed = percent(summary.creditSpentMinor, summary.creditMinor);
   const name = monthName(summary.month);
   const noPlan = !summary.hasPlan || income === 0;
 
@@ -37,7 +43,7 @@ export function HeroBalance({ summary }: { summary: MonthSummary }) {
 
       <div className="depth-3">
         {noPlan ? (
-          <AnimatedMoney minor={spent} className="hero__value" />
+          <AnimatedMoney minor={totalSpent} className="hero__value" />
         ) : (
           <AnimatedMoney minor={remaining} className={cn("hero__value", remaining < 0 && "is-negative")} />
         )}
@@ -55,7 +61,8 @@ export function HeroBalance({ summary }: { summary: MonthSummary }) {
           <>You've used {fmt(-remaining)} more than your {fmt(income)} income.</>
         ) : (
           <>
-            of {fmt(income)} income, after {fmt(spent)} spent{saved > 0 ? ` and ${fmt(saved)} saved` : ""}.
+            of {fmt(income)} income, after {fmt(spent)} spent{saved > 0 ? ` and ${fmt(saved)} saved` : ""}
+            {hasCredit ? " (credit card spending not included)" : ""}.
           </>
         )}
       </p>
@@ -77,6 +84,29 @@ export function HeroBalance({ summary }: { summary: MonthSummary }) {
               <span className="dot dot--left" /> Left <strong>{fmt(Math.max(0, remaining))}</strong>
             </li>
           </ul>
+        </div>
+      )}
+
+      {!noPlan && hasCredit && (
+        <div className="hero__credit depth-2">
+          <div className="hero__credit-top">
+            <span className="hero__credit-label">
+              <CreditCard size={14} aria-hidden="true" /> Credit card
+            </span>
+            <span>
+              <strong className={cn(summary.creditRemainingMinor < 0 && "text-negative")}>
+                {summary.creditRemainingMinor < 0 ? `${fmt(-summary.creditRemainingMinor)} over` : `${fmt(summary.creditRemainingMinor)} left`}
+              </strong>{" "}
+              <span className="muted">
+                · {fmt(summary.creditSpentMinor)} of {fmt(summary.creditMinor)} used
+              </span>
+            </span>
+          </div>
+          <ProgressBar
+            value={creditUsed}
+            status={summary.creditRemainingMinor < 0 ? "over" : (creditUsed ?? 0) >= 80 ? "warning" : "ok"}
+            label="Credit card used"
+          />
         </div>
       )}
 

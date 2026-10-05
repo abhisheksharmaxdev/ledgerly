@@ -191,6 +191,18 @@ export function monthlyTotals(db: DB, userId: number, start?: string, end?: stri
   );
 }
 
+/** Credit-card spending (spending categories only) per month. */
+export function monthlyCreditTotals(db: DB, userId: number) {
+  return all<{ month: string; totalMinor: number }>(
+    db,
+    `SELECT substr(e.date, 1, 7) AS month, SUM(e.amount_minor) AS totalMinor
+     FROM expenses e JOIN categories c ON c.id = e.category_id
+     WHERE e.user_id = ? AND e.payment_method = 'credit_card' AND c.kind = 'expense'
+     GROUP BY month`,
+    [userId],
+  );
+}
+
 export async function largestExpense(db: DB, userId: number, start: string, end: string): Promise<Expense | null> {
   const row = await get<ExpenseRow>(
     db,

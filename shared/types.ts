@@ -41,6 +41,8 @@ export interface BudgetLine {
 export interface MonthlyPlan {
   month: string;
   incomeMinor: number;
+  /** Credit-card amount available this month; 0 means credit-card spending isn't tracked separately. */
+  creditMinor: number;
   budgets: BudgetLine[];
   isDemo: boolean;
   createdAt: string;
@@ -88,8 +90,19 @@ export interface MonthSummary {
   savedMinor: number;
   plannedSpendMinor: number;
   savingsTargetMinor: number;
+  /** income + credit − planned spending − savings target. */
   unallocatedMinor: number;
-  /** income − spent − saved: money still unspent and not yet moved to savings. */
+  /** Credit-card amount from the plan (0 = not tracked separately). */
+  creditMinor: number;
+  /** Spending paid by credit card (spending categories only). */
+  creditSpentMinor: number;
+  creditRemainingMinor: number;
+  /**
+   * Spending that came out of income. With a credit amount set, credit-card spending is
+   * excluded (it comes out of the card instead); otherwise it's all spending.
+   */
+  spentFromIncomeMinor: number;
+  /** income − spent from income − saved: money still unspent and not yet moved to savings. */
   remainingMinor: number;
   budgetRemainingMinor: number;
   budgetUtilization: number | null;
@@ -156,6 +169,8 @@ export interface MonthListItem {
   month: string;
   hasPlan: boolean;
   incomeMinor: number;
+  creditMinor: number;
+  creditSpentMinor: number;
   spentMinor: number;
   savedMinor: number;
   count: number;

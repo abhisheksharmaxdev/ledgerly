@@ -2,7 +2,7 @@ import type { DB } from "../db/connection";
 import type { DailyPoint, MonthAnalytics, MonthListItem, PaymentBreakdown, TrendPoint } from "../../../shared/types";
 import { PAYMENT_METHODS } from "../../../shared/constants";
 import { dayOfWeek, isWeekend, monthBounds, pad2, shiftMonth } from "../../../shared/dates";
-import { dailyTotals, largestExpense, monthlyTotals, paymentTotals } from "../repositories/expenses";
+import { dailyTotals, largestExpense, monthlyCreditTotals, monthlyTotals, paymentTotals } from "../repositories/expenses";
 import { planTotals } from "../repositories/plans";
 import { periodOf } from "./summary";
 
@@ -103,22 +103,27 @@ export async function buildTrend(db: DB, userId: number, endMonth: string, count
 
 /** Every month that has a plan or at least one expense, newest first. */
 export async function listMonths(db: DB, userId: number): Promise<MonthListItem[]> {
-  const [planRows, totalRows] = await Promise.all([planTotals(db, userId), monthlyTotals(db, userId)]);
+  const [planRows, totalRows, creditRows] = await Promise.all([
+    planTotals(db, userId),
+    monthlyTotals(db, userId),
+    monthlyCreditTotals(db, userId),
+  ]);
   const map = new Map<string, MonthListItem>();
   const get = (month: string) => {
     let item = map.get(month);
     if (!item) {
-      item = { month, hasPlan: false, incomeMinor: 0, spentMinor: 0, savedMinor: 0, count: 0 };
+      item = { month, hasPlan: false, incomeMinor: 0, creditMinor: 0, creditSpentMinor: 0, spentMinor: 0, savedMinor: 0, count: 0 };
       map.set(month, item);
     }
     return item;
   };
-  for (const p of planRows) Object.assign(get(p.month), { hasPlan: true, incomeMinor: p.incomeMinor });
+  for (const p of planRows) Object.assign(get(p.month), { hasPlan: true, incomeMinor: p.incomeMinor, creditMinor: p.creditMinor });
   for (const t of totalRows) {
     const item = get(t.month);
     if (t.kind === "savings") item.savedMinor += t.totalMinor;
     else item.spentMinor += t.totalMinor;
     item.count += t.count;
   }
+  for (const c of creditRows) get(c.month).creditSpentMinor = c.totalMinor;
   return [...map.values()].sort((a, b) => (a.month < b.month ? 1 : -1));
 }

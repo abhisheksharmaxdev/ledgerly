@@ -5,7 +5,7 @@
  */
 import type { Category, Insight, InsightsResponse, MonthAnalytics, MonthSummary } from "../../../shared/types";
 import type { CurrencyCode } from "../../../shared/constants";
-import { formatMoney } from "../../../shared/money";
+import { formatMoney, percent } from "../../../shared/money";
 import { formatDay, monthLabel, monthName } from "../../../shared/dates";
 
 export function buildInsights(
@@ -67,6 +67,26 @@ export function buildInsights(
         detail: `Spent ${fmt(summary.spentMinor)} against a plan of ${fmt(summary.plannedSpendMinor)}.`,
       });
     }
+  }
+
+  // Credit card balance (only when the month has a credit amount).
+  if (summary.creditMinor > 0 && summary.creditSpentMinor > 0) {
+    const used = percent(summary.creditSpentMinor, summary.creditMinor) ?? 0;
+    insights.push(
+      summary.creditRemainingMinor < 0
+        ? {
+            id: "credit-over",
+            tone: "negative",
+            title: `You've spent ${fmt(-summary.creditRemainingMinor)} more than your credit card amount.`,
+            detail: `${fmt(summary.creditSpentMinor)} paid by credit card against ${fmt(summary.creditMinor)}.`,
+          }
+        : {
+            id: "credit-left",
+            tone: used >= 80 ? "warning" : "neutral",
+            title: `You have ${fmt(summary.creditRemainingMinor)} left on your credit card.`,
+            detail: `${used}% of ${fmt(summary.creditMinor)} used.`,
+          },
+    );
   }
 
   // 3. Categories approaching their limit.

@@ -171,6 +171,45 @@ describe("monthly plans and summary math", () => {
     expect(s.overBudgetCount).toBe(1);
   });
 
+  it("deducts credit-card spending from the credit amount instead of income", async () => {
+    await addExpense({ amountMinor: 300000, categoryId: cats.food.id, date: "2026-09-05", paymentMethod: "upi" });
+    await addExpense({ amountMinor: 120000, categoryId: cats.shopping.id, date: "2026-09-06", paymentMethod: "credit_card" });
+    await addExpense({ amountMinor: 50000, categoryId: cats.savings.id, date: "2026-09-07", paymentMethod: "bank_transfer" });
+
+    // Without a credit amount, everything comes out of income (unchanged behaviour).
+    await agent.put("/api/plans/2026-09").set(H).send(plan(20000, { food: 5000 }));
+    let s = await summary("2026-09");
+    expect(s).toMatchObject({ creditMinor: 0, creditSpentMinor: 120000, spentFromIncomeMinor: 420000, remainingMinor: 2000000 - 420000 - 50000 });
+
+    // With a credit amount, card spending is taken from the card.
+    await agent.put("/api/plans/2026-09").set(H).send({ ...plan(20000, { food: 5000 }), creditMinor: 1000000 });
+    expect((await agent.get("/api/plans/2026-09")).body.plan.creditMinor).toBe(1000000);
+    s = await summary("2026-09");
+    expect(s).toMatchObject({
+      spentMinor: 420000, // total spending and budgets still include every payment method
+      creditMinor: 1000000,
+      creditSpentMinor: 120000,
+      creditRemainingMinor: 880000,
+      spentFromIncomeMinor: 300000,
+      remainingMinor: 2000000 - 300000 - 50000,
+      unallocatedMinor: 2000000 + 1000000 - 500000,
+    });
+
+    // Going over the card amount shows as a negative balance and an insight.
+    await addExpense({ amountMinor: 900000, categoryId: cats.shopping.id, date: "2026-09-08", paymentMethod: "credit_card" });
+    s = await summary("2026-09");
+    expect(s.creditRemainingMinor).toBe(-20000);
+    const insights = (await agent.get("/api/months/2026-09/insights?today=2026-09-25")).body.insights as { id: string }[];
+    expect(insights.some((i) => i.id === "credit-over")).toBe(true);
+
+    // The history list uses the same numbers, and the credit amount survives a backup round trip.
+    const months = (await agent.get("/api/months")).body as { month: string; creditMinor: number; creditSpentMinor: number }[];
+    expect(months.find((m) => m.month === "2026-09")).toMatchObject({ creditMinor: 1000000, creditSpentMinor: 1020000 });
+    const backup = (await agent.get("/api/data/export.json")).body;
+    await agent.post("/api/data/restore").set(H).send({ confirm: "REPLACE", backup }).expect(200);
+    expect((await agent.get("/api/plans/2026-09")).body.plan.creditMinor).toBe(1000000);
+  });
+
   it("returns sensible empty-month results", async () => {
     const s = await summary("2026-05");
     expect(s).toMatchObject({ hasPlan: false, spentMinor: 0, transactionCount: 0, budgetUtilization: null, savingsRate: null, changeMinor: null });

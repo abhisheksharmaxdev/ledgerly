@@ -39,12 +39,15 @@ export default function Plan() {
   );
 }
 
-type Values = { income: string; budgets: Record<number, string> };
+type Values = { income: string; credit: string; budgets: Record<number, string> };
 
-function valuesFrom(p: { incomeMinor: number; budgets: { categoryId: number; amountMinor: number }[] } | null): Values {
-  if (!p) return { income: "", budgets: {} };
+function valuesFrom(
+  p: { incomeMinor: number; creditMinor?: number; budgets: { categoryId: number; amountMinor: number }[] } | null,
+): Values {
+  if (!p) return { income: "", credit: "", budgets: {} };
   return {
     income: p.incomeMinor ? minorToInput(p.incomeMinor) : "",
+    credit: p.creditMinor ? minorToInput(p.creditMinor) : "",
     budgets: Object.fromEntries(p.budgets.map((b) => [b.categoryId, b.amountMinor ? minorToInput(b.amountMinor) : "0"])),
   };
 }
@@ -70,12 +73,15 @@ function PlanForm({ month, data, categories }: { month: string; data: PlanRespon
   const lastSpend = new Map(data.previousMonthSpend.map((b) => [b.categoryId, b.amountMinor]));
 
   const income = parseField(values.income);
+  const credit = parseField(values.credit);
+  const available = income.minor + credit.minor;
   const parsed = new Map(rows.map((c) => [c.id, parseField(values.budgets[c.id])]));
   const planned = expenseRows.reduce((s, c) => s + (parsed.get(c.id)?.minor ?? 0), 0);
   const savingsTarget = savingsRows.reduce((s, c) => s + (parsed.get(c.id)?.minor ?? 0), 0);
   const allocated = planned + savingsTarget;
-  const unallocated = income.minor - allocated;
-  const hasErrors = !!income.error || [...parsed.values()].some((p) => p.error);
+  const unallocated = available - allocated;
+  const hasErrors = !!income.error || !!credit.error || [...parsed.values()].some((p) => p.error);
+  const fundsLabel = credit.minor > 0 ? "your income and credit card" : "your income";
   const dirty = JSON.stringify(values) !== JSON.stringify(initial);
 
   // Protect unsaved edits from accidental navigation.
@@ -94,11 +100,13 @@ function PlanForm({ month, data, categories }: { month: string; data: PlanRespon
       .filter((c) => (values.budgets[c.id] ?? "").trim() !== "")
       .map((c) => ({ categoryId: c.id, amountMinor: parsed.get(c.id)!.minor }));
     save.mutate(
-      { month, input: { incomeMinor: income.minor, budgets } },
+      { month, input: { incomeMinor: income.minor, creditMinor: credit.minor, budgets } },
       {
         onSuccess: () => {
           setConfirmOver(false);
-          toast.success("Monthly plan saved", { description: `${monthLabel(month)} · ${fmt(income.minor)} income · ${fmt(allocated)} allocated` });
+          toast.success("Monthly plan saved", {
+            description: `${monthLabel(month)} · ${fmt(income.minor)} income${credit.minor > 0 ? ` + ${fmt(credit.minor)} credit card` : ""} · ${fmt(allocated)} allocated`,
+          });
         },
         onError: (e) => toast.error("Couldn't save the plan", { description: errorMessage(e) }),
       },
@@ -114,7 +122,7 @@ function PlanForm({ month, data, categories }: { month: string; data: PlanRespon
     else doSave();
   };
 
-  const scale = Math.max(income.minor, allocated, 1);
+  const scale = Math.max(available, allocated, 1);
   const w = (v: number) => `${Math.min(100, (v / scale) * 100)}%`;
 
   return (
@@ -143,7 +151,16 @@ function PlanForm({ month, data, categories }: { month: string; data: PlanRespon
 
         <Card aria-labelledby="income-title">
           <CardHeader id="income-title" title="Income" subtitle="Total money coming in this month" />
-          <MoneyField id="income" label="Monthly income" symbol={symbol} value={values.income} error={income.error} onChange={(v) => setValues((s) => ({ ...s, income: v }))} large />
+          <div className="income-fields">
+            <div>
+              <MoneyField id="income" label="Monthly income" symbol={symbol} value={values.income} error={income.error} onChange={(v) => setValues((s) => ({ ...s, income: v }))} large />
+              <p className="muted small income-fields__hint">Cash, UPI, debit card and bank transfer expenses are deducted from this.</p>
+            </div>
+            <div>
+              <MoneyField id="credit" label="Credit card" symbol={symbol} value={values.credit} error={credit.error} onChange={(v) => setValues((s) => ({ ...s, credit: v }))} large />
+              <p className="muted small income-fields__hint">Optional. Expenses paid by credit card are deducted from this instead of your income.</p>
+            </div>
+          </div>
         </Card>
 
         <Card aria-labelledby="budgets-title">
@@ -175,6 +192,22 @@ function PlanForm({ month, data, categories }: { month: string; data: PlanRespon
                 <AnimatedMoney minor={income.minor} />
               </dd>
             </div>
+            {credit.minor > 0 && (
+              <>
+                <div>
+                  <dt>Credit card</dt>
+                  <dd>
+                    <AnimatedMoney minor={credit.minor} />
+                  </dd>
+                </div>
+                <div>
+                  <dt>Total available</dt>
+                  <dd>
+                    <AnimatedMoney minor={available} />
+                  </dd>
+                </div>
+              </>
+            )}
             <div>
               <dt>
                 <span className="dot dot--spent" /> Planned expenses
@@ -204,21 +237,21 @@ function PlanForm({ month, data, categories }: { month: string; data: PlanRespon
               </dd>
             </div>
           </dl>
-          <div className="alloc__bar alloc__bar--lg" role="img" aria-label={`${fmt(planned)} planned spending and ${fmt(savingsTarget)} savings out of ${fmt(income.minor)} income`}>
+          <div className="alloc__bar alloc__bar--lg" role="img" aria-label={`${fmt(planned)} planned spending and ${fmt(savingsTarget)} savings out of ${fmt(available)} available`}>
             <span className="alloc__seg alloc__seg--spent" style={{ width: w(planned) }} />
             <span className="alloc__seg alloc__seg--saved" style={{ width: w(savingsTarget) }} />
-            {income.minor > 0 && allocated > income.minor && <span className="alloc__income-mark" style={{ left: w(income.minor) }} title="Income" />}
+            {available > 0 && allocated > available && <span className="alloc__income-mark" style={{ left: w(available) }} title="Available" />}
           </div>
 
           {unallocated < 0 && (
             <p className="callout callout--warning" role="status">
               <TriangleAlert size={16} aria-hidden="true" />
               <span>
-                Your plan allocates {fmt(-unallocated)} more than your income. You can still save it; lower a few budgets if you'd like it to balance.
+                Your plan allocates {fmt(-unallocated)} more than {fundsLabel}. You can still save it; lower a few budgets if you'd like it to balance.
               </span>
             </p>
           )}
-          {income.minor === 0 && allocated > 0 && (
+          {available === 0 && allocated > 0 && (
             <p className="callout callout--info">
               <Info size={16} aria-hidden="true" />
               <span>Add your income to see how much is left unallocated.</span>
@@ -253,8 +286,8 @@ function PlanForm({ month, data, categories }: { month: string; data: PlanRespon
       <ConfirmDialog
         open={confirmOver}
         onOpenChange={setConfirmOver}
-        title="Plan exceeds income"
-        description={`You're allocating ${fmt(allocated)} against ${fmt(income.minor)} of income: ${fmt(-unallocated)} more than you earn this month. Save it anyway?`}
+        title={credit.minor > 0 ? "Plan exceeds income and credit" : "Plan exceeds income"}
+        description={`You're allocating ${fmt(allocated)} against ${fmt(available)} available: ${fmt(-unallocated)} more than ${fundsLabel}. Save it anyway?`}
         confirmLabel="Save anyway"
         tone="primary"
         busy={save.isPending}

@@ -5,7 +5,7 @@ import { percent } from "../../../shared/money";
 import { daysInMonth, monthBounds, monthKeyOf, pad2, parseMonthKey, shiftMonth } from "../../../shared/dates";
 import { listCategories } from "../repositories/categories";
 import { getPlan } from "../repositories/plans";
-import { monthlyTotals, spendingBetween, totalsByCategory } from "../repositories/expenses";
+import { monthlyTotals, paymentTotals, spendingBetween, totalsByCategory } from "../repositories/expenses";
 
 export function periodOf(month: string, today: string): MonthSummary["period"] {
   const current = monthKeyOf(today);
@@ -31,10 +31,11 @@ export async function buildMonthSummary(db: DB, userId: number, month: string, t
   const samePeriodEnd = `${prevMonth}-${pad2(Math.min(daysElapsed, daysInMonth(prevYear, prevM)))}`;
 
   // Independent queries run in parallel (each one is a network round trip on a hosted database).
-  const [categories, plan, totalRows, prevRows, samePeriodSpent, todaySpent] = await Promise.all([
+  const [categories, plan, totalRows, paymentRows, prevRows, samePeriodSpent, todaySpent] = await Promise.all([
     listCategories(db, userId),
     getPlan(db, userId, month),
     totalsByCategory(db, userId, start, end),
+    paymentTotals(db, userId, start, end),
     monthlyTotals(db, userId, prevBounds.start, prevBounds.end),
     period === "current" ? spendingBetween(db, userId, prevBounds.start, samePeriodEnd) : null,
     period === "current" ? spendingBetween(db, userId, today, today) : null,
@@ -87,6 +88,12 @@ export async function buildMonthSummary(db: DB, userId: number, month: string, t
 
   const incomeMinor = plan?.incomeMinor ?? 0;
 
+  // Credit-card spending comes out of the card instead of income, but only once the month has a
+  // credit amount; without one, everything is paid from income as before.
+  const creditMinor = plan?.creditMinor ?? 0;
+  const creditSpentMinor = paymentRows.find((r) => r.method === "credit_card")?.totalMinor ?? 0;
+  const spentFromIncomeMinor = creditMinor > 0 ? spentMinor - creditSpentMinor : spentMinor;
+
   // Previous month comparison.
   const prevSpent = prevRows.filter((r) => r.kind === "expense").reduce((s, r) => s + r.totalMinor, 0);
   const prevSaved = prevRows.filter((r) => r.kind === "savings").reduce((s, r) => s + r.totalMinor, 0);
@@ -117,8 +124,12 @@ export async function buildMonthSummary(db: DB, userId: number, month: string, t
     savedMinor,
     plannedSpendMinor,
     savingsTargetMinor,
-    unallocatedMinor: incomeMinor - plannedSpendMinor - savingsTargetMinor,
-    remainingMinor: incomeMinor - spentMinor - savedMinor,
+    unallocatedMinor: incomeMinor + creditMinor - plannedSpendMinor - savingsTargetMinor,
+    creditMinor,
+    creditSpentMinor,
+    creditRemainingMinor: creditMinor - creditSpentMinor,
+    spentFromIncomeMinor,
+    remainingMinor: incomeMinor - spentFromIncomeMinor - savedMinor,
     budgetRemainingMinor: plannedSpendMinor - spentMinor,
     budgetUtilization: percent(spentMinor, plannedSpendMinor),
     savingsRate: percent(savedMinor, incomeMinor),

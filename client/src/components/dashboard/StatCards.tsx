@@ -38,6 +38,7 @@ export function StatCards({ summary }: { summary: MonthSummary }) {
         foot={
           summary.hasPlan ? (
             <span className="muted">
+              {summary.creditMinor > 0 && <>+ {fmt(summary.creditMinor)} credit card · </>}
               {fmt(summary.plannedSpendMinor)} planned · {fmt(summary.savingsTargetMinor)} to save ·{" "}
               <span className={cn(summary.unallocatedMinor < 0 && "text-negative")}>
                 {summary.unallocatedMinor < 0 ? `${fmt(-summary.unallocatedMinor)} over-allocated` : `${fmt(summary.unallocatedMinor)} unallocated`}

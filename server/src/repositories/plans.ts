@@ -8,6 +8,7 @@ interface PlanRow {
   year: number;
   month: number;
   income_minor: number;
+  credit_limit_minor: number;
   is_demo: number;
   created_at: string;
   updated_at: string;
@@ -16,6 +17,7 @@ interface PlanRow {
 const toPlan = (row: PlanRow, budgets: BudgetLine[]): MonthlyPlan => ({
   month: toMonthKey(row.year, row.month),
   incomeMinor: row.income_minor,
+  creditMinor: row.credit_limit_minor ?? 0,
   budgets,
   isDemo: row.is_demo === 1,
   createdAt: row.created_at,
@@ -64,7 +66,7 @@ export async function latestPlanBefore(db: DB, userId: number, monthKey: string)
 export function upsertPlanStatements(
   userId: number,
   monthKey: string,
-  input: { incomeMinor: number; budgets: { categoryId: number; amountMinor: number }[] },
+  input: { incomeMinor: number; creditMinor?: number; budgets: { categoryId: number; amountMinor: number }[] },
   opts: { isDemo?: boolean } = {},
 ): InStatement[] {
   const { year, month } = parseMonthKey(monthKey);
@@ -72,12 +74,13 @@ export function upsertPlanStatements(
   const key = [userId, year, month];
   return [
     {
-      sql: `INSERT INTO monthly_plans (user_id, year, month, income_minor, is_demo) VALUES (?, ?, ?, ?, ?)
+      sql: `INSERT INTO monthly_plans (user_id, year, month, income_minor, credit_limit_minor, is_demo) VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT (user_id, year, month) DO UPDATE SET
               income_minor = excluded.income_minor,
+              credit_limit_minor = excluded.credit_limit_minor,
               is_demo = excluded.is_demo,
               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
-      args: [...key, input.incomeMinor, opts.isDemo ? 1 : 0],
+      args: [...key, input.incomeMinor, input.creditMinor ?? 0, opts.isDemo ? 1 : 0],
     },
     { sql: `DELETE FROM plan_budgets WHERE plan_id = ${planId}`, args: key },
     ...input.budgets.map((b) => ({
@@ -91,7 +94,7 @@ export async function upsertPlan(
   db: DB,
   userId: number,
   monthKey: string,
-  input: { incomeMinor: number; budgets: { categoryId: number; amountMinor: number }[] },
+  input: { incomeMinor: number; creditMinor?: number; budgets: { categoryId: number; amountMinor: number }[] },
 ): Promise<MonthlyPlan> {
   // Budgets may only reference the user's own categories.
   const known = new Set((await all<{ id: number }>(db, "SELECT id FROM categories WHERE user_id = ?", [userId])).map((r) => r.id));
@@ -120,11 +123,18 @@ export function deletePlansStatements(userId: number, extraWhere = ""): InStatem
   ];
 }
 
-/** Plan totals per month (income, planned consumption, savings target) for trend/history views. */
+/** Plan totals per month (income, credit, planned consumption, savings target) for trend/history views. */
 export async function planTotals(db: DB, userId: number) {
-  const rows = await all<{ year: number; month: number; incomeMinor: number; plannedSpendMinor: number; savingsTargetMinor: number }>(
+  const rows = await all<{
+    year: number;
+    month: number;
+    incomeMinor: number;
+    creditMinor: number;
+    plannedSpendMinor: number;
+    savingsTargetMinor: number;
+  }>(
     db,
-    `SELECT p.year, p.month, p.income_minor AS incomeMinor,
+    `SELECT p.year, p.month, p.income_minor AS incomeMinor, p.credit_limit_minor AS creditMinor,
             COALESCE(SUM(CASE WHEN c.kind = 'expense' THEN b.amount_minor END), 0) AS plannedSpendMinor,
             COALESCE(SUM(CASE WHEN c.kind = 'savings' THEN b.amount_minor END), 0) AS savingsTargetMinor
      FROM monthly_plans p
@@ -137,6 +147,7 @@ export async function planTotals(db: DB, userId: number) {
   return rows.map((r) => ({
     month: toMonthKey(r.year, r.month),
     incomeMinor: r.incomeMinor,
+    creditMinor: r.creditMinor,
     plannedSpendMinor: r.plannedSpendMinor,
     savingsTargetMinor: r.savingsTargetMinor,
   }));
@@ -154,4 +165,3 @@ export async function listPlans(db: DB, userId: number): Promise<MonthlyPlan[]> 
     ),
   );
 }
-

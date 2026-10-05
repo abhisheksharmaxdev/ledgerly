@@ -128,7 +128,9 @@ export default function Analytics() {
                     </thead>
                     <tbody>
                       {months.data.map((m) => {
-                        const left = m.incomeMinor - m.spentMinor - m.savedMinor;
+                        // Same rule as the dashboard: with a credit amount, card spending isn't taken from income.
+                        const fromIncome = m.creditMinor > 0 ? m.spentMinor - m.creditSpentMinor : m.spentMinor;
+                        const left = m.incomeMinor - fromIncome - m.savedMinor;
                         return (
                           <tr key={m.month} className={cn(m.month === month && "is-current")}>
                             <th scope="row">

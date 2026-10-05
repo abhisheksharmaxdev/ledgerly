@@ -195,6 +195,7 @@ export async function exportBackup(db: DB, userId: number) {
     plans: plans.map((p) => ({
       month: p.month,
       incomeMinor: p.incomeMinor,
+      creditMinor: p.creditMinor,
       budgets: p.budgets.map((b) => ({ category: slugById.get(b.categoryId)!, amountMinor: b.amountMinor })),
     })),
     expenses: expenses.map((e) => ({
@@ -228,6 +229,7 @@ const backupSchema = z.object({
       z.object({
         month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
         incomeMinor: minorAmount,
+        creditMinor: minorAmount.default(0),
         budgets: z.array(z.object({ category: z.string(), amountMinor: minorAmount })).max(500),
       }),
     )
@@ -292,7 +294,10 @@ export async function restoreBackup(db: DB, userId: number, payload: unknown): P
 
   for (const p of backup.plans) {
     const { year, month } = parseMonthKey(p.month);
-    statements.push({ sql: "INSERT INTO monthly_plans (user_id, year, month, income_minor) VALUES (?, ?, ?, ?)", args: [userId, year, month, p.incomeMinor] });
+    statements.push({
+      sql: "INSERT INTO monthly_plans (user_id, year, month, income_minor, credit_limit_minor) VALUES (?, ?, ?, ?, ?)",
+      args: [userId, year, month, p.incomeMinor, p.creditMinor],
+    });
     for (const b of p.budgets) {
       statements.push({
         sql: `INSERT INTO plan_budgets (plan_id, category_id, amount_minor)

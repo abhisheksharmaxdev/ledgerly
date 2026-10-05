@@ -50,6 +50,7 @@ export type ExpenseInput = z.input<typeof expenseInputSchema>;
 export const planInputSchema = z
   .object({
     incomeMinor: minorAmount,
+    creditMinor: minorAmount.default(0),
     budgets: z
       .array(z.object({ categoryId: z.number().int().positive(), amountMinor: minorAmount }))
       .max(200),

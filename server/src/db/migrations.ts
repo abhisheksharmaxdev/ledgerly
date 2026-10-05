@@ -163,6 +163,13 @@ export const migrations: Migration[] = [
         CREATE INDEX ix_expenses_user_date ON expenses (user_id, date);
       `),
   },
+  {
+    version: 3,
+    name: "credit card amount per plan",
+    statements: () => [
+      "ALTER TABLE monthly_plans ADD COLUMN credit_limit_minor INTEGER NOT NULL DEFAULT 0 CHECK (credit_limit_minor >= 0)",
+    ],
+  },
 ];
 
 /** Applies pending migrations; each one runs as a single atomic batch. */
