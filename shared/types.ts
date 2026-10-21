@@ -37,9 +37,11 @@ export interface IncomeEntry {
 }
 
 export interface IncomeList {
-  month: string;
   items: IncomeEntry[];
-  totalMinor: number;
+  total: number;
+  page: number;
+  pageSize: number;
+  totalAmountMinor: number;
 }
 
 export interface ExpenseList {

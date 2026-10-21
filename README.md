@@ -12,7 +12,8 @@ Amounts are in Indian Rupees (₹) by default and are stored as integer paise, s
 
 - **Daily expense tracking.** Adding an expense takes a few keystrokes: press `N`, type the amount, pick a category, press Enter. The date defaults to today, the last payment method is remembered, and there's a *Save & add another* option for logging several items in a row.
 - **Monthly income and budget planning.** Set your income, a budget for each category, and a separate savings target. Each month keeps its own plan, and a new month can start from a copy of the previous one. If the plan adds up to more than your income, you get a warning but can still save it.
-- **Money received.** Record money as it comes in (salary, a freelance payment, a refund) from the Income section of the Monthly Plan page. Each entry is added to the income of the month it was received in, so money left, unallocated amount, savings rate and the charts update without editing the plan.
+- **Money received.** Record money as it comes in (salary, a freelance payment, a refund) with the *Add money* button next to *Add expense*. Each entry is added to the income of the month it was received in, so money left, unallocated amount, savings rate and the charts update without editing the plan.
+- **Income statement.** The Income page lists every payment received, with the same search, month, method, date-range and sort filters as Expenses, plus pagination and CSV export.
 - **Category-wise spending.** Eleven default categories, plus your own. Budget progress shows on-track, near-limit (≥ 80 %), over-budget and unbudgeted states. Over-budget bars are hatched, so the state doesn't rely on colour alone.
 - **Interactive analytics.** Spending by category, daily spending (daily or cumulative against budget pace), monthly trend, budget vs actual, payment methods, and day of week. Every chart has tooltips and can be switched to a data table.
 - **Insights.** Short observations computed from your own data: highest category, categories near or over budget, change vs last month, savings rate, weekend vs weekday spending, largest expense. When there isn't enough data, the app says so instead of guessing.
@@ -70,7 +71,7 @@ Amounts are in Indian Rupees (₹) by default and are stored as integer paise, s
 │       ├── api/            fetch client and React Query hooks
 │       ├── components/     charts, dashboard, expenses, income, layout, settings, three (3D), ui
 │       ├── hooks/          shared hooks (today, money formatting, tilt, reduced motion…)
-│       ├── pages/          Dashboard, Expenses, Analytics, Plan, Settings, Login, Admin
+│       ├── pages/          Dashboard, Expenses, Income, Analytics, Plan, Settings, Login, Admin
 │       ├── store/          Zustand UI store
 │       ├── styles/         design tokens, component and page styles
 │       └── utils/

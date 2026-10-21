@@ -12,6 +12,7 @@ import { readLastViewedMonth, useUi } from "./store/ui";
 
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Expenses = lazy(() => import("./pages/Expenses"));
+const Income = lazy(() => import("./pages/Income"));
 const Analytics = lazy(() => import("./pages/Analytics"));
 const Plan = lazy(() => import("./pages/Plan"));
 const Settings = lazy(() => import("./pages/Settings"));
@@ -106,6 +107,7 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <Dashboard /> },
       { path: "expenses", element: <Expenses /> },
+      { path: "income", element: <Income /> },
       { path: "analytics", element: <Analytics /> },
       { path: "plan", element: <Plan /> },
       { path: "settings", element: <Settings /> },

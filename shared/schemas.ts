@@ -121,6 +121,19 @@ export const expenseQuerySchema = z.object({
 });
 export type ExpenseQuery = z.output<typeof expenseQuerySchema>;
 
+export const incomeQuerySchema = z.object({
+  month: monthKey.optional(),
+  from: isoDate.optional(),
+  to: isoDate.optional(),
+  paymentMethod: z.union([z.enum(RECEIVED_METHOD_VALUES), z.literal("none")]).optional(),
+  q: z.string().trim().max(100).optional(),
+  sort: z.enum(["date", "amount"]).default("date"),
+  order: z.enum(["asc", "desc"]).default("desc"),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(200).default(25),
+});
+export type IncomeQuery = z.output<typeof incomeQuerySchema>;
+
 export const emailSchema = z
   .string({ error: "Enter your email" })
   .trim()

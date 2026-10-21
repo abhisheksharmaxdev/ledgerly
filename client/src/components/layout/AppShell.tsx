@@ -4,6 +4,7 @@ import { MotionConfig } from "motion/react";
 import {
   ChartPie,
   FlaskConical,
+  HandCoins,
   LayoutDashboard,
   LogOut,
   Plus,
@@ -18,6 +19,7 @@ import { useHotkey, useMediaQuery, useReducedMotion } from "../../hooks";
 import { useUi } from "../../store/ui";
 import { cn } from "../../utils/cn";
 import { ExpenseDialog } from "../expenses/ExpenseDialog";
+import { IncomeDialog } from "../income/IncomeDialog";
 import { MonthSwitcher } from "./MonthSwitcher";
 
 const Background3D = lazy(() => import("../three/Background3D"));
@@ -25,10 +27,13 @@ const Background3D = lazy(() => import("../three/Background3D"));
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/expenses", label: "Expenses", icon: ReceiptText },
+  { to: "/income", label: "Income", icon: HandCoins },
   { to: "/analytics", label: "Analytics", icon: ChartPie },
   { to: "/plan", label: "Monthly Plan", icon: Target },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
+// The phone bar has room for five items; Income is reached from Expenses and the Monthly Plan there.
+const MOBILE_NAV = NAV.filter((n) => n.to !== "/income");
 
 function useResolvedTheme(): "dark" | "light" {
   const { data } = useSettings();
@@ -68,6 +73,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const reduced = useReducedMotion();
   const { data: settings } = useSettings();
   const openAdd = useUi((s) => s.openAddExpense);
+  const openAddIncome = useUi((s) => s.openAddIncome);
   const location = useLocation();
   const { data: session } = useSession();
   const isAdmin = session?.user?.role === "admin";
@@ -181,6 +187,9 @@ export function AppShell({ children }: { children: ReactNode }) {
                   <FlaskConical size={14} aria-hidden="true" /> <span>Demo data</span>
                 </NavLink>
               )}
+              <button type="button" className="btn btn--ghost topbar__money" onClick={openAddIncome} aria-label="Add money received" title="Add money received">
+                <HandCoins size={18} /> <span>Add money</span>
+              </button>
               <button type="button" className="btn btn--primary topbar__add" onClick={openAdd}>
                 <Plus size={18} /> Add expense
               </button>
@@ -200,7 +209,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
 
         <nav className="mobile-nav" aria-label="Primary">
-          {NAV.slice(0, 2).map((n) => (
+          {MOBILE_NAV.slice(0, 2).map((n) => (
             <NavLink key={n.to} to={n.to} end={n.end} className={({ isActive }) => cn("mobile-nav__link", isActive && "is-active")}>
               <n.icon size={20} aria-hidden="true" />
               <span>{n.label === "Dashboard" ? "Home" : n.label}</span>
@@ -209,7 +218,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <button type="button" className="fab" onClick={openAdd} aria-label="Add expense">
             <Plus size={26} />
           </button>
-          {NAV.slice(2, 4).map((n) => (
+          {MOBILE_NAV.slice(2, 4).map((n) => (
             <NavLink key={n.to} to={n.to} className={({ isActive }) => cn("mobile-nav__link", isActive && "is-active")}>
               <n.icon size={20} aria-hidden="true" />
               <span>{n.label === "Monthly Plan" ? "Plan" : n.label}</span>
@@ -222,6 +231,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </nav>
 
         <ExpenseDialog />
+        <IncomeDialog />
       </div>
     </MotionConfig>
   );

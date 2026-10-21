@@ -1,21 +1,32 @@
 import { Router } from "express";
+import { z } from "zod";
 import { userId } from "../auth/session";
 import type { DB } from "../db/connection";
-import type { IncomeList } from "../../../shared/types";
-import { incomeInputSchema, monthKey } from "../../../shared/schemas";
-import { deleteIncome, getIncome, insertIncome, listIncome, updateIncome } from "../repositories/income";
+import { incomeInputSchema, incomeQuerySchema, isoDate, monthKey } from "../../../shared/schemas";
+import { monthBounds } from "../../../shared/dates";
+import { deleteIncome, getIncome, insertIncome, queryIncome, updateIncome } from "../repositories/income";
+import { exportIncomeCsv } from "../services/importExport";
 import { notFound } from "../utils/errors";
 import { idParam } from "../utils/http";
 import { parseOrThrow } from "../utils/validate";
+
+const exportQuery = z.object({ month: monthKey.optional(), from: isoDate.optional(), to: isoDate.optional() });
 
 export function incomeRouter(db: DB): Router {
   const r = Router();
 
   r.get("/", async (req, res) => {
-    const month = parseOrThrow(monthKey, req.query.month, "Month must look like YYYY-MM");
-    const items = await listIncome(db, userId(req), month);
-    const body: IncomeList = { month, items, totalMinor: items.reduce((s, i) => s + i.amountMinor, 0) };
-    res.json(body);
+    res.json(await queryIncome(db, userId(req), parseOrThrow(incomeQuerySchema, req.query)));
+  });
+
+  r.get("/export.csv", async (req, res) => {
+    const q = parseOrThrow(exportQuery, req.query);
+    const range = q.month ? monthBounds(q.month) : { start: q.from, end: q.to };
+    const name = q.month ? `ledgerly-income-${q.month}.csv` : `ledgerly-income-${new Date().toISOString().slice(0, 10)}.csv`;
+    const csv = await exportIncomeCsv(db, userId(req), range);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
+    res.send(csv);
   });
 
   r.post("/", async (req, res) => {

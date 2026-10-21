@@ -39,6 +39,19 @@ export async function exportCsv(db: DB, userId: number, range: { start?: string;
   return `﻿${csv}\r\n`; // BOM so Excel opens ₹/UTF-8 text correctly
 }
 
+/** The income statement as CSV: every money-received entry in the range. */
+export async function exportIncomeCsv(db: DB, userId: number, range: { start?: string; end?: string } = {}): Promise<string> {
+  const entries = await allIncome(db, userId, range.start, range.end);
+  const rows = entries.map((e) => ({
+    Date: e.date,
+    Amount: minorToDecimalString(e.amountMinor),
+    "Received Via": e.paymentMethod ? PAYMENT_METHODS.find((p) => p.value === e.paymentMethod)!.label : "",
+    Note: safeCell(e.description ?? ""),
+  }));
+  const csv = Papa.unparse({ fields: ["Date", "Amount", "Received Via", "Note"], data: rows }, { newline: "\r\n" });
+  return `﻿${csv}\r\n`;
+}
+
 // ---------- CSV import ----------
 
 const HEADER_ALIASES: Record<string, string> = {

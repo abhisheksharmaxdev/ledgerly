@@ -1,6 +1,6 @@
-import { ChevronLeft, ChevronRight, Download, Plus, ReceiptText, Search, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, HandCoins, Plus, ReceiptText, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import { PAYMENT_METHODS } from "../../../shared/constants";
 import { isValidIsoDate, isValidMonthKey, monthLabel } from "../../../shared/dates";
@@ -120,6 +120,9 @@ export default function Expenses() {
       subtitle="Search, filter and manage every transaction"
       actions={
         <>
+          <Link to="/income" className="btn btn--ghost mobile-only">
+            <HandCoins size={16} /> Income
+          </Link>
           <button type="button" className="btn btn--ghost" onClick={exportCsv}>
             <Download size={16} /> Export CSV
           </button>

@@ -36,7 +36,7 @@ export const qk = {
   trend: (end: string, count: number, today: string) => ["trend", end, count, today] as const,
   plan: (month: string) => ["plan", month] as const,
   expenses: (params: string) => ["expenses", params] as const,
-  income: (month: string) => ["income", month] as const,
+  income: (params: string) => ["income", params] as const,
   dataStatus: ["dataStatus"] as const,
 };
 
@@ -258,8 +258,19 @@ export function useDeleteExpense() {
 
 // ---------- money received ----------
 
-export function useIncome(month: string) {
-  return useQuery({ queryKey: qk.income(month), queryFn: () => api<IncomeList>("GET", `/income?month=${month}`) });
+export function useIncome(params: URLSearchParams | string) {
+  const qs = typeof params === "string" ? params : params.toString();
+  return useQuery({
+    queryKey: qk.income(qs),
+    queryFn: () => api<IncomeList>("GET", `/income${qs ? `?${qs}` : ""}`),
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** Every entry of one month, for the Monthly Plan (no placeholder, so totals never show another month's data). */
+export function useMonthIncome(month: string) {
+  const qs = `month=${month}&pageSize=200`;
+  return useQuery({ queryKey: qk.income(qs), queryFn: () => api<IncomeList>("GET", `/income?${qs}`) });
 }
 
 export function useSaveIncome() {

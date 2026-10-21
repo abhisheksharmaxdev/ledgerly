@@ -6,7 +6,7 @@ import { monthLabel, monthName, shiftMonth } from "../../../shared/dates";
 import { minorToInput, parseAmount } from "../../../shared/money";
 import type { Category, PlanResponse } from "../../../shared/types";
 import { errorMessage } from "../api/client";
-import { useCategories, useIncome, usePlan, useSavePlan } from "../api/queries";
+import { useCategories, useMonthIncome, usePlan, useSavePlan } from "../api/queries";
 import { ReceivedMoney } from "../components/income/ReceivedMoney";
 import { Page } from "../components/layout/Page";
 import { Card, CardHeader } from "../components/ui/Card";
@@ -76,7 +76,7 @@ function PlanForm({ month, data, categories }: { month: string; data: PlanRespon
   const income = parseField(values.income);
   const credit = parseField(values.credit);
   // Money received entries are saved on their own and count toward this month's income.
-  const received = useIncome(month).data?.totalMinor ?? 0;
+  const received = useMonthIncome(month).data?.totalAmountMinor ?? 0;
   const available = income.minor + received + credit.minor;
   const parsed = new Map(rows.map((c) => [c.id, parseField(values.budgets[c.id])]));
   const planned = expenseRows.reduce((s, c) => s + (parsed.get(c.id)?.minor ?? 0), 0);

@@ -243,7 +243,7 @@ describe("money received", () => {
     await addIncome({ amountMinor: 70000, date: "2026-10-01", paymentMethod: "upi" });
 
     const list = (await agent.get("/api/income?month=2026-09")).body;
-    expect(list.totalMinor).toBe(600000);
+    expect(list).toMatchObject({ total: 2, totalAmountMinor: 600000 });
     expect(list.items.map((i: { date: string }) => i.date)).toEqual(["2026-09-20", "2026-09-15"]);
 
     let s = await summary("2026-09");
@@ -278,7 +278,8 @@ describe("money received", () => {
     expect((await addIncome({ amountMinor: 500, date: "2026-02-30" })).status).toBe(400);
     expect((await addIncome({ amountMinor: 500, date: "2026-09-15", paymentMethod: "credit_card" })).status).toBe(400);
     expect((await agent.post("/api/income").send({ amountMinor: 500, date: "2026-09-15" })).status).toBe(403);
-    expect((await agent.get("/api/income")).status).toBe(400);
+    expect((await agent.get("/api/income?month=2026-13")).status).toBe(400);
+    expect((await agent.get("/api/income?paymentMethod=credit_card")).status).toBe(400);
     expect((await agent.put("/api/income/999").set(H).send({ amountMinor: 500, date: "2026-09-15" })).status).toBe(404);
     expect((await agent.delete("/api/income/999").set(H)).status).toBe(404);
   });
@@ -287,11 +288,47 @@ describe("money received", () => {
     const bob = await approvedUser("bob@example.com");
     const entry = await addIncome({ amountMinor: 500000, date: "2026-09-15" });
 
-    expect((await bob.get("/api/income?month=2026-09")).body).toMatchObject({ items: [], totalMinor: 0 });
+    expect((await bob.get("/api/income?month=2026-09")).body).toMatchObject({ items: [], total: 0, totalAmountMinor: 0 });
     expect((await bob.get("/api/months/2026-09/summary?today=2026-09-25")).body.incomeMinor).toBe(0);
     expect((await bob.put(`/api/income/${entry.body.id}`).set(H).send({ amountMinor: 1, date: "2026-09-15" })).status).toBe(404);
     expect((await bob.delete(`/api/income/${entry.body.id}`).set(H)).status).toBe(404);
     expect((await summary("2026-09")).incomeMinor).toBe(500000);
+  });
+
+  it("lists a filterable, sortable and paginated statement", async () => {
+    await addIncome({ amountMinor: 500000, date: "2026-08-01", description: "Salary August", paymentMethod: "bank_transfer" });
+    await addIncome({ amountMinor: 120000, date: "2026-09-04", description: "Freelance logo", paymentMethod: "upi" });
+    await addIncome({ amountMinor: 30000, date: "2026-09-10", description: "Refund 50%" });
+    await addIncome({ amountMinor: 500000, date: "2026-09-01", description: "Salary September", paymentMethod: "bank_transfer" });
+
+    const all = (await agent.get("/api/income")).body;
+    expect(all).toMatchObject({ total: 4, totalAmountMinor: 1150000, page: 1, pageSize: 25 });
+    expect(all.items.map((i: { date: string }) => i.date)).toEqual(["2026-09-10", "2026-09-04", "2026-09-01", "2026-08-01"]);
+
+    const get = async (qs: string) => (await agent.get(`/api/income?${qs}`)).body;
+    expect((await get("month=2026-09")).totalAmountMinor).toBe(650000);
+    expect((await get("q=salary")).total).toBe(2);
+    expect((await get("q=50%25")).items.map((i: { description: string }) => i.description)).toEqual(["Refund 50%"]); // % is literal
+    expect((await get("paymentMethod=upi")).totalAmountMinor).toBe(120000);
+    expect((await get("paymentMethod=none")).total).toBe(1);
+    expect((await get("from=2026-09-02&to=2026-09-30")).total).toBe(2);
+    expect((await get("sort=amount&order=asc")).items[0].amountMinor).toBe(30000);
+
+    const page2 = await get("pageSize=3&page=2");
+    expect(page2).toMatchObject({ total: 4, totalAmountMinor: 1150000, page: 2 });
+    expect(page2.items).toHaveLength(1);
+  });
+
+  it("exports the statement as CSV", async () => {
+    await addIncome({ amountMinor: 123450, date: "2026-09-15", description: "=HYPERLINK(1)", paymentMethod: "bank_transfer" });
+    await addIncome({ amountMinor: 5000, date: "2026-10-02" });
+    const res = await agent.get("/api/income/export.csv?month=2026-09");
+    expect(res.status).toBe(200);
+    expect(res.headers["content-disposition"]).toContain("ledgerly-income-2026-09.csv");
+    expect(res.text).toContain("Date,Amount,Received Via,Note");
+    expect(res.text).toContain("2026-09-15,1234.50,Bank Transfer,'=HYPERLINK(1)");
+    expect(res.text).not.toContain("2026-10-02");
+    expect((await agent.get("/api/income/export.csv")).text).toContain("2026-10-02");
   });
 
   it("is included in backups and removed by clear-all", async () => {
@@ -300,7 +337,7 @@ describe("money received", () => {
     expect(backup.incomeEntries).toHaveLength(1);
 
     await agent.post("/api/data/clear").set(H).send({ confirm: "DELETE" }).expect(200);
-    expect((await agent.get("/api/income?month=2026-09")).body.totalMinor).toBe(0);
+    expect((await agent.get("/api/income?month=2026-09")).body.totalAmountMinor).toBe(0);
 
     await agent.post("/api/data/restore").set(H).send({ confirm: "REPLACE", backup }).expect(200);
     const list = (await agent.get("/api/income?month=2026-09")).body;

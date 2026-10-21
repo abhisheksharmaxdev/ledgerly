@@ -88,7 +88,7 @@ export async function deleteExpense(db: DB, userId: number, id: number): Promise
   return (await run(db, "DELETE FROM expenses WHERE id = ? AND user_id = ?", [id, userId])) > 0;
 }
 
-const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+export const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
 export async function queryExpenses(db: DB, userId: number, q: ExpenseQuery): Promise<ExpenseList> {
   const where: string[] = ["e.user_id = ?"];
