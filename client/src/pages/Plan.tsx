@@ -6,7 +6,8 @@ import { monthLabel, monthName, shiftMonth } from "../../../shared/dates";
 import { minorToInput, parseAmount } from "../../../shared/money";
 import type { Category, PlanResponse } from "../../../shared/types";
 import { errorMessage } from "../api/client";
-import { useCategories, usePlan, useSavePlan } from "../api/queries";
+import { useCategories, useIncome, usePlan, useSavePlan } from "../api/queries";
+import { ReceivedMoney } from "../components/income/ReceivedMoney";
 import { Page } from "../components/layout/Page";
 import { Card, CardHeader } from "../components/ui/Card";
 import { ConfirmDialog } from "../components/ui/Dialog";
@@ -74,7 +75,9 @@ function PlanForm({ month, data, categories }: { month: string; data: PlanRespon
 
   const income = parseField(values.income);
   const credit = parseField(values.credit);
-  const available = income.minor + credit.minor;
+  // Money received entries are saved on their own and count toward this month's income.
+  const received = useIncome(month).data?.totalMinor ?? 0;
+  const available = income.minor + received + credit.minor;
   const parsed = new Map(rows.map((c) => [c.id, parseField(values.budgets[c.id])]));
   const planned = expenseRows.reduce((s, c) => s + (parsed.get(c.id)?.minor ?? 0), 0);
   const savingsTarget = savingsRows.reduce((s, c) => s + (parsed.get(c.id)?.minor ?? 0), 0);
@@ -161,6 +164,7 @@ function PlanForm({ month, data, categories }: { month: string; data: PlanRespon
               <p className="muted small income-fields__hint">Optional. Expenses paid by credit card are deducted from this instead of your income.</p>
             </div>
           </div>
+          <ReceivedMoney month={month} baseIncomeMinor={income.minor} />
         </Card>
 
         <Card aria-labelledby="budgets-title">
@@ -192,21 +196,29 @@ function PlanForm({ month, data, categories }: { month: string; data: PlanRespon
                 <AnimatedMoney minor={income.minor} />
               </dd>
             </div>
+            {received > 0 && (
+              <div>
+                <dt>Money received</dt>
+                <dd>
+                  <AnimatedMoney minor={received} />
+                </dd>
+              </div>
+            )}
             {credit.minor > 0 && (
-              <>
-                <div>
-                  <dt>Credit card</dt>
-                  <dd>
-                    <AnimatedMoney minor={credit.minor} />
-                  </dd>
-                </div>
-                <div>
-                  <dt>Total available</dt>
-                  <dd>
-                    <AnimatedMoney minor={available} />
-                  </dd>
-                </div>
-              </>
+              <div>
+                <dt>Credit card</dt>
+                <dd>
+                  <AnimatedMoney minor={credit.minor} />
+                </dd>
+              </div>
+            )}
+            {(credit.minor > 0 || received > 0) && (
+              <div>
+                <dt>Total available</dt>
+                <dd>
+                  <AnimatedMoney minor={available} />
+                </dd>
+              </div>
             )}
             <div>
               <dt>

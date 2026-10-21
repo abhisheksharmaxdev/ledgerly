@@ -88,7 +88,11 @@ export function dataRouter(db: DB): Router {
     if (body?.confirm !== "DELETE") throw badRequest('Type "DELETE" to confirm');
     const uid = userId(req);
     const counts = await countOwnData(db, uid);
-    await batch(db, [{ sql: "DELETE FROM expenses WHERE user_id = ?", args: [uid] }, ...deletePlansStatements(uid)]);
+    await batch(db, [
+      { sql: "DELETE FROM expenses WHERE user_id = ?", args: [uid] },
+      { sql: "DELETE FROM income_entries WHERE user_id = ?", args: [uid] },
+      ...deletePlansStatements(uid),
+    ]);
     res.json({ expenses: counts!.e, plans: counts!.p });
   });
 

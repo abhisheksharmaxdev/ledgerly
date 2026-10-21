@@ -131,6 +131,8 @@ export default function Analytics() {
                         // Same rule as the dashboard: with a credit amount, card spending isn't taken from income.
                         const fromIncome = m.creditMinor > 0 ? m.spentMinor - m.creditSpentMinor : m.spentMinor;
                         const left = m.incomeMinor - fromIncome - m.savedMinor;
+                        // Money received counts as income even in a month without a plan.
+                        const hasIncome = m.hasPlan || m.incomeMinor > 0;
                         return (
                           <tr key={m.month} className={cn(m.month === month && "is-current")}>
                             <th scope="row">
@@ -138,11 +140,11 @@ export default function Analytics() {
                                 {monthLabel(m.month)}
                               </button>
                             </th>
-                            <td>{m.hasPlan ? fmt(m.incomeMinor) : <span className="muted">No plan</span>}</td>
+                            <td>{hasIncome ? fmt(m.incomeMinor) : <span className="muted">No plan</span>}</td>
                             <td>{fmt(m.spentMinor)}</td>
                             <td>{fmt(m.savedMinor)}</td>
-                            <td className={cn(m.hasPlan && left < 0 && "text-negative")}>{m.hasPlan ? fmt(left) : "—"}</td>
-                            <td>{m.hasPlan && m.incomeMinor ? `${percent(m.savedMinor, m.incomeMinor)}%` : "—"}</td>
+                            <td className={cn(hasIncome && left < 0 && "text-negative")}>{hasIncome ? fmt(left) : "—"}</td>
+                            <td>{hasIncome && m.incomeMinor ? `${percent(m.savedMinor, m.incomeMinor)}%` : "—"}</td>
                             <td>{m.count}</td>
                           </tr>
                         );

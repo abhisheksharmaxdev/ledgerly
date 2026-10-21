@@ -1366,3 +1366,40 @@
 .hero__credit-top strong {
   font-variant-numeric: tabular-nums;
 }
+
+/* ---------- Money received ---------- */
+.received {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.received__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+.received__title {
+  margin: 0 0 2px;
+  font-weight: 650;
+}
+.received__empty {
+  margin: 0;
+}
+.received__sum {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.tx__amount.is-received {
+  color: var(--positive);
+}

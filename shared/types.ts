@@ -1,5 +1,5 @@
 /** API response shapes shared by the server and the client. Money = integer minor units. */
-import type { AppSettings, CategoryKind, PaymentMethod } from "./constants";
+import type { AppSettings, CategoryKind, PaymentMethod, ReceivedMethod } from "./constants";
 
 export interface Category {
   id: number;
@@ -23,6 +23,23 @@ export interface Expense {
   isDemo: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Money received during a month; counted in that month's income automatically. */
+export interface IncomeEntry {
+  id: number;
+  amountMinor: number;
+  date: string;
+  description: string | null;
+  paymentMethod: ReceivedMethod | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IncomeList {
+  month: string;
+  items: IncomeEntry[];
+  totalMinor: number;
 }
 
 export interface ExpenseList {
@@ -85,7 +102,12 @@ export interface MonthSummary {
   period: "past" | "current" | "future";
   daysInMonth: number;
   daysElapsed: number;
+  /** Total income: the plan's monthly income plus money received during the month. */
   incomeMinor: number;
+  /** Monthly income entered on the plan. */
+  baseIncomeMinor: number;
+  /** Money received during the month (income entries). */
+  receivedMinor: number;
   spentMinor: number;
   savedMinor: number;
   plannedSpendMinor: number;
@@ -157,6 +179,7 @@ export interface MonthAnalytics {
 
 export interface TrendPoint {
   month: string;
+  /** Plan income plus money received. */
   incomeMinor: number;
   spentMinor: number;
   savedMinor: number;
@@ -168,6 +191,7 @@ export interface TrendPoint {
 export interface MonthListItem {
   month: string;
   hasPlan: boolean;
+  /** Plan income plus money received. */
   incomeMinor: number;
   creditMinor: number;
   creditSpentMinor: number;

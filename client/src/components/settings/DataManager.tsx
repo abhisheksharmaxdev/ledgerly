@@ -181,7 +181,7 @@ export function DataManager() {
         <h3 className="settings-group__title">
           <Database size={15} aria-hidden="true" /> Danger zone
         </h3>
-        <p className="muted small">Permanently delete every expense and monthly plan. Categories and settings are kept. Export a backup first.</p>
+        <p className="muted small">Permanently delete every expense, monthly plan and money received entry. Categories and settings are kept. Export a backup first.</p>
         <button type="button" className="btn btn--danger-outline" onClick={() => (setClearText(""), setClearOpen(true))}>
           <Trash size={16} /> Delete all data…
         </button>
@@ -273,7 +273,7 @@ export function DataManager() {
         }
       />
 
-      <Dialog open={clearOpen} onOpenChange={setClearOpen} title="Delete all data?" description="This permanently removes every expense and monthly plan." size="sm" role="alertdialog">
+      <Dialog open={clearOpen} onOpenChange={setClearOpen} title="Delete all data?" description="This permanently removes every expense, monthly plan and money received entry." size="sm" role="alertdialog">
         <form
           onSubmit={(e) => {
             e.preventDefault();

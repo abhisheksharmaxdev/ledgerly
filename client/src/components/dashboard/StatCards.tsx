@@ -38,6 +38,7 @@ export function StatCards({ summary }: { summary: MonthSummary }) {
         foot={
           summary.hasPlan ? (
             <span className="muted">
+              {summary.receivedMinor > 0 && <>incl. {fmt(summary.receivedMinor)} received · </>}
               {summary.creditMinor > 0 && <>+ {fmt(summary.creditMinor)} credit card · </>}
               {fmt(summary.plannedSpendMinor)} planned · {fmt(summary.savingsTargetMinor)} to save ·{" "}
               <span className={cn(summary.unallocatedMinor < 0 && "text-negative")}>
@@ -45,9 +46,12 @@ export function StatCards({ summary }: { summary: MonthSummary }) {
               </span>
             </span>
           ) : (
-            <Link to="/plan" className="link-inline">
-              Set your income →
-            </Link>
+            <span>
+              {summary.receivedMinor > 0 && <span className="muted">{fmt(summary.receivedMinor)} received · </span>}
+              <Link to="/plan" className="link-inline">
+                Set your income →
+              </Link>
+            </span>
           )
         }
       >

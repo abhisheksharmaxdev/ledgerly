@@ -5,6 +5,7 @@ import { percent } from "../../../shared/money";
 import { daysInMonth, monthBounds, monthKeyOf, pad2, parseMonthKey, shiftMonth } from "../../../shared/dates";
 import { listCategories } from "../repositories/categories";
 import { getPlan } from "../repositories/plans";
+import { receivedBetween } from "../repositories/income";
 import { monthlyTotals, paymentTotals, spendingBetween, totalsByCategory } from "../repositories/expenses";
 
 export function periodOf(month: string, today: string): MonthSummary["period"] {
@@ -31,11 +32,12 @@ export async function buildMonthSummary(db: DB, userId: number, month: string, t
   const samePeriodEnd = `${prevMonth}-${pad2(Math.min(daysElapsed, daysInMonth(prevYear, prevM)))}`;
 
   // Independent queries run in parallel (each one is a network round trip on a hosted database).
-  const [categories, plan, totalRows, paymentRows, prevRows, samePeriodSpent, todaySpent] = await Promise.all([
+  const [categories, plan, totalRows, paymentRows, receivedMinor, prevRows, samePeriodSpent, todaySpent] = await Promise.all([
     listCategories(db, userId),
     getPlan(db, userId, month),
     totalsByCategory(db, userId, start, end),
     paymentTotals(db, userId, start, end),
+    receivedBetween(db, userId, start, end),
     monthlyTotals(db, userId, prevBounds.start, prevBounds.end),
     period === "current" ? spendingBetween(db, userId, prevBounds.start, samePeriodEnd) : null,
     period === "current" ? spendingBetween(db, userId, today, today) : null,
@@ -86,7 +88,9 @@ export async function buildMonthSummary(db: DB, userId: number, month: string, t
       };
     });
 
-  const incomeMinor = plan?.incomeMinor ?? 0;
+  // Money received during the month is added to the planned income automatically.
+  const baseIncomeMinor = plan?.incomeMinor ?? 0;
+  const incomeMinor = baseIncomeMinor + receivedMinor;
 
   // Credit-card spending comes out of the card instead of income, but only once the month has a
   // credit amount; without one, everything is paid from income as before.
@@ -120,6 +124,8 @@ export async function buildMonthSummary(db: DB, userId: number, month: string, t
     daysInMonth: days,
     daysElapsed,
     incomeMinor,
+    baseIncomeMinor,
+    receivedMinor,
     spentMinor,
     savedMinor,
     plannedSpendMinor,

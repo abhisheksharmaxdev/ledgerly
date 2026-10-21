@@ -1,5 +1,5 @@
 import type { Client, InStatement } from "@libsql/client";
-import { DEFAULT_CATEGORIES, PAYMENT_METHOD_VALUES } from "../../../shared/constants";
+import { DEFAULT_CATEGORIES, PAYMENT_METHOD_VALUES, RECEIVED_METHOD_VALUES } from "../../../shared/constants";
 
 const NOW = "(strftime('%Y-%m-%dT%H:%M:%fZ','now'))";
 const paymentList = PAYMENT_METHOD_VALUES.map((p) => `'${p}'`).join(",");
@@ -169,6 +169,24 @@ export const migrations: Migration[] = [
     statements: () => [
       "ALTER TABLE monthly_plans ADD COLUMN credit_limit_minor INTEGER NOT NULL DEFAULT 0 CHECK (credit_limit_minor >= 0)",
     ],
+  },
+  {
+    version: 4,
+    name: "money received",
+    statements: () =>
+      script(`
+        CREATE TABLE income_entries (
+          id             INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          amount_minor   INTEGER NOT NULL CHECK (amount_minor > 0),
+          date           TEXT    NOT NULL CHECK (date GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]'),
+          description    TEXT,
+          payment_method TEXT CHECK (payment_method IS NULL OR payment_method IN (${RECEIVED_METHOD_VALUES.map((m) => `'${m}'`).join(",")})),
+          created_at     TEXT    NOT NULL DEFAULT ${NOW},
+          updated_at     TEXT    NOT NULL DEFAULT ${NOW}
+        );
+        CREATE INDEX ix_income_entries_user_date ON income_entries (user_id, date);
+      `),
   },
 ];
 

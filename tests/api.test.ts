@@ -229,6 +229,86 @@ describe("monthly plans and summary math", () => {
   });
 });
 
+describe("money received", () => {
+  const addIncome = (body: Record<string, unknown>) => agent.post("/api/income").set(H).send(body);
+
+  it("adds received money to the month's income automatically", async () => {
+    await agent.put("/api/plans/2026-09").set(H).send({ incomeMinor: 2000000, budgets: [{ categoryId: cats.food.id, amountMinor: 500000 }] });
+    await addExpense({ amountMinor: 300000, categoryId: cats.food.id, date: "2026-09-05", paymentMethod: "upi" });
+
+    const first = await addIncome({ amountMinor: 500000, date: "2026-09-15", description: "Freelance", paymentMethod: "bank_transfer" });
+    expect(first.status).toBe(201);
+    expect(first.body).toMatchObject({ amountMinor: 500000, date: "2026-09-15", description: "Freelance", paymentMethod: "bank_transfer" });
+    const second = await addIncome({ amountMinor: 100000, date: "2026-09-20" });
+    await addIncome({ amountMinor: 70000, date: "2026-10-01", paymentMethod: "upi" });
+
+    const list = (await agent.get("/api/income?month=2026-09")).body;
+    expect(list.totalMinor).toBe(600000);
+    expect(list.items.map((i: { date: string }) => i.date)).toEqual(["2026-09-20", "2026-09-15"]);
+
+    let s = await summary("2026-09");
+    expect(s).toMatchObject({
+      baseIncomeMinor: 2000000,
+      receivedMinor: 600000,
+      incomeMinor: 2600000,
+      remainingMinor: 2600000 - 300000,
+      unallocatedMinor: 2600000 - 500000,
+    });
+
+    // Editing and deleting entries update the income straight away.
+    await agent.put(`/api/income/${first.body.id}`).set(H).send({ amountMinor: 400000, date: "2026-09-15" }).expect(200);
+    await agent.delete(`/api/income/${second.body.id}`).set(H).expect(204);
+    s = await summary("2026-09");
+    expect(s).toMatchObject({ receivedMinor: 400000, incomeMinor: 2400000, remainingMinor: 2400000 - 300000 });
+
+    // A month with money received but no plan still has income.
+    expect(await summary("2026-10", "2026-10-05")).toMatchObject({ hasPlan: false, baseIncomeMinor: 0, incomeMinor: 70000, remainingMinor: 70000 });
+
+    // History and trend use the same totals.
+    const months = (await agent.get("/api/months")).body as { month: string; hasPlan: boolean; incomeMinor: number }[];
+    expect(months.find((m) => m.month === "2026-09")).toMatchObject({ hasPlan: true, incomeMinor: 2400000 });
+    expect(months.find((m) => m.month === "2026-10")).toMatchObject({ hasPlan: false, incomeMinor: 70000 });
+    const trend = (await agent.get("/api/analytics/trend?end=2026-10&months=2&today=2026-10-05")).body as { incomeMinor: number }[];
+    expect(trend.map((p) => p.incomeMinor)).toEqual([2400000, 70000]);
+  });
+
+  it("validates entries", async () => {
+    expect((await addIncome({ amountMinor: 0, date: "2026-09-15" })).status).toBe(400);
+    expect((await addIncome({ amountMinor: -500, date: "2026-09-15" })).status).toBe(400);
+    expect((await addIncome({ amountMinor: 500, date: "2026-02-30" })).status).toBe(400);
+    expect((await addIncome({ amountMinor: 500, date: "2026-09-15", paymentMethod: "credit_card" })).status).toBe(400);
+    expect((await agent.post("/api/income").send({ amountMinor: 500, date: "2026-09-15" })).status).toBe(403);
+    expect((await agent.get("/api/income")).status).toBe(400);
+    expect((await agent.put("/api/income/999").set(H).send({ amountMinor: 500, date: "2026-09-15" })).status).toBe(404);
+    expect((await agent.delete("/api/income/999").set(H)).status).toBe(404);
+  });
+
+  it("keeps entries private to each account", async () => {
+    const bob = await approvedUser("bob@example.com");
+    const entry = await addIncome({ amountMinor: 500000, date: "2026-09-15" });
+
+    expect((await bob.get("/api/income?month=2026-09")).body).toMatchObject({ items: [], totalMinor: 0 });
+    expect((await bob.get("/api/months/2026-09/summary?today=2026-09-25")).body.incomeMinor).toBe(0);
+    expect((await bob.put(`/api/income/${entry.body.id}`).set(H).send({ amountMinor: 1, date: "2026-09-15" })).status).toBe(404);
+    expect((await bob.delete(`/api/income/${entry.body.id}`).set(H)).status).toBe(404);
+    expect((await summary("2026-09")).incomeMinor).toBe(500000);
+  });
+
+  it("is included in backups and removed by clear-all", async () => {
+    await addIncome({ amountMinor: 500000, date: "2026-09-15", description: "Bonus", paymentMethod: "cash" });
+    const backup = (await agent.get("/api/data/export.json")).body;
+    expect(backup.incomeEntries).toHaveLength(1);
+
+    await agent.post("/api/data/clear").set(H).send({ confirm: "DELETE" }).expect(200);
+    expect((await agent.get("/api/income?month=2026-09")).body.totalMinor).toBe(0);
+
+    await agent.post("/api/data/restore").set(H).send({ confirm: "REPLACE", backup }).expect(200);
+    const list = (await agent.get("/api/income?month=2026-09")).body;
+    expect(list.items).toHaveLength(1);
+    expect(list.items[0]).toMatchObject({ amountMinor: 500000, description: "Bonus", paymentMethod: "cash" });
+  });
+});
+
 describe("import / export", () => {
   it("exports CSV and re-imports it atomically", async () => {
     await addExpense({ amountMinor: 25050, categoryId: cats.food.id, date: "2026-09-25", description: "=cmd", paymentMethod: "upi" });

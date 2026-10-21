@@ -15,6 +15,7 @@ import { authRouter } from "./routes/auth";
 import { categoriesRouter } from "./routes/categories";
 import { dataRouter } from "./routes/data";
 import { expensesRouter } from "./routes/expenses";
+import { incomeRouter } from "./routes/income";
 import { monthsRouter } from "./routes/months";
 import { plansRouter } from "./routes/plans";
 import { settingsRouter } from "./routes/settings";
@@ -79,6 +80,7 @@ export async function createApp({ db, config, logger = console, serveClient = fa
   // Everything below requires a signed-in, approved account and only ever sees that account's data.
   api.use(requireUser);
   api.use("/expenses", expensesRouter(db));
+  api.use("/income", incomeRouter(db));
   api.use("/plans", plansRouter(db));
   api.use("/categories", categoriesRouter(db));
   api.use("/settings", settingsRouter(db));

@@ -4,6 +4,7 @@ import { PAYMENT_METHODS } from "../../../shared/constants";
 import { dayOfWeek, isWeekend, monthBounds, pad2, shiftMonth } from "../../../shared/dates";
 import { dailyTotals, largestExpense, monthlyCreditTotals, monthlyTotals, paymentTotals } from "../repositories/expenses";
 import { planTotals } from "../repositories/plans";
+import { monthlyReceivedTotals } from "../repositories/income";
 import { periodOf } from "./summary";
 
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
@@ -78,11 +79,13 @@ export async function buildMonthAnalytics(db: DB, userId: number, month: string,
 /** Spending/saving/income for `count` months ending at `endMonth` (inclusive). */
 export async function buildTrend(db: DB, userId: number, endMonth: string, count: number): Promise<TrendPoint[]> {
   const firstMonth = shiftMonth(endMonth, -(count - 1));
-  const [totals, planRows] = await Promise.all([
+  const [totals, planRows, receivedRows] = await Promise.all([
     monthlyTotals(db, userId, `${firstMonth}-01`, monthBounds(endMonth).end),
     planTotals(db, userId),
+    monthlyReceivedTotals(db, userId, `${firstMonth}-01`, monthBounds(endMonth).end),
   ]);
   const plans = new Map(planRows.map((p) => [p.month, p]));
+  const received = new Map(receivedRows.map((r) => [r.month, r.totalMinor]));
   const points: TrendPoint[] = [];
   for (let i = 0; i < count; i++) {
     const month = shiftMonth(firstMonth, i);
@@ -90,7 +93,7 @@ export async function buildTrend(db: DB, userId: number, endMonth: string, count
     const plan = plans.get(month);
     points.push({
       month,
-      incomeMinor: plan?.incomeMinor ?? 0,
+      incomeMinor: (plan?.incomeMinor ?? 0) + (received.get(month) ?? 0),
       spentMinor: rows.filter((r) => r.kind === "expense").reduce((s, r) => s + r.totalMinor, 0),
       savedMinor: rows.filter((r) => r.kind === "savings").reduce((s, r) => s + r.totalMinor, 0),
       plannedSpendMinor: plan?.plannedSpendMinor ?? 0,
@@ -101,12 +104,13 @@ export async function buildTrend(db: DB, userId: number, endMonth: string, count
   return points;
 }
 
-/** Every month that has a plan or at least one expense, newest first. */
+/** Every month that has a plan, an expense or money received, newest first. */
 export async function listMonths(db: DB, userId: number): Promise<MonthListItem[]> {
-  const [planRows, totalRows, creditRows] = await Promise.all([
+  const [planRows, totalRows, creditRows, receivedRows] = await Promise.all([
     planTotals(db, userId),
     monthlyTotals(db, userId),
     monthlyCreditTotals(db, userId),
+    monthlyReceivedTotals(db, userId),
   ]);
   const map = new Map<string, MonthListItem>();
   const get = (month: string) => {
@@ -125,5 +129,6 @@ export async function listMonths(db: DB, userId: number): Promise<MonthListItem[
     item.count += t.count;
   }
   for (const c of creditRows) get(c.month).creditSpentMinor = c.totalMinor;
+  for (const r of receivedRows) get(r.month).incomeMinor += r.totalMinor;
   return [...map.values()].sort((a, b) => (a.month < b.month ? 1 : -1));
 }

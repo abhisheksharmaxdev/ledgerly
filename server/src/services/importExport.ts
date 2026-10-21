@@ -2,7 +2,7 @@ import Papa from "papaparse";
 import { z } from "zod";
 import { all, batch, type DB, type InStatement } from "../db/connection";
 import type { ImportPreview } from "../../../shared/types";
-import { PAYMENT_METHODS, PAYMENT_METHOD_VALUES, type PaymentMethod } from "../../../shared/constants";
+import { PAYMENT_METHODS, PAYMENT_METHOD_VALUES, RECEIVED_METHOD_VALUES, type PaymentMethod } from "../../../shared/constants";
 import { minorToDecimalString, parseAmount } from "../../../shared/money";
 import { isValidIsoDate, monthKeyOf, pad2, parseMonthKey } from "../../../shared/dates";
 import { categoryCreateSchema, fieldErrors, isoDate, minorAmount, settingsSchema } from "../../../shared/schemas";
@@ -10,6 +10,7 @@ import { buildCategoryResolver, listCategories } from "../repositories/categorie
 import { bulkInsertStatements, expensesInRange, type ExpenseData } from "../repositories/expenses";
 import { deletePlansStatements, listPlans } from "../repositories/plans";
 import { getSettings, updateSettingsStatements } from "../repositories/settings";
+import { allIncome } from "../repositories/income";
 import { badRequest } from "../utils/errors";
 
 export const MAX_IMPORT_ROWS = 20_000;
@@ -171,11 +172,12 @@ const BACKUP_APP = "ledgerly";
 const BACKUP_VERSION = 1;
 
 export async function exportBackup(db: DB, userId: number) {
-  const [categories, settings, plans, expenses] = await Promise.all([
+  const [categories, settings, plans, expenses, income] = await Promise.all([
     listCategories(db, userId),
     getSettings(db, userId),
     listPlans(db, userId),
     expensesInRange(db, userId),
+    allIncome(db, userId),
   ]);
   const slugById = new Map(categories.map((c) => [c.id, c.slug]));
   return {
@@ -206,6 +208,14 @@ export async function exportBackup(db: DB, userId: number) {
       paymentMethod: e.paymentMethod,
       createdAt: e.createdAt,
       updatedAt: e.updatedAt,
+    })),
+    incomeEntries: income.map((i) => ({
+      date: i.date,
+      amountMinor: i.amountMinor,
+      description: i.description,
+      paymentMethod: i.paymentMethod,
+      createdAt: i.createdAt,
+      updatedAt: i.updatedAt,
     })),
   };
 }
@@ -247,6 +257,20 @@ const backupSchema = z.object({
       }),
     )
     .max(500_000),
+  // Absent in backups made before money-received entries existed; those leave current entries as they are.
+  incomeEntries: z
+    .array(
+      z.object({
+        date: isoDate,
+        amountMinor: minorAmount.refine((v) => v > 0, "Amount must be greater than 0"),
+        description: z.string().max(200).nullable(),
+        paymentMethod: z.enum(RECEIVED_METHOD_VALUES).nullable(),
+        createdAt: z.string().max(40).optional(),
+        updatedAt: z.string().max(40).optional(),
+      }),
+    )
+    .max(100_000)
+    .optional(),
 });
 
 /** Replaces the user's plans and expenses with the backup's contents in one atomic batch. Other users are untouched. */
@@ -315,6 +339,17 @@ export async function restoreBackup(db: DB, userId: number, payload: unknown): P
             VALUES ${chunk.map(() => `(?, ?, ${categoryId}, ?, ?, ?, COALESCE(?, ${NOW}), COALESCE(?, ${NOW}))`).join(", ")}`,
       args: chunk.flatMap((e) => [userId, e.amountMinor, userId, e.category, e.date, e.description, e.paymentMethod, e.createdAt ?? null, e.updatedAt ?? null]),
     });
+  }
+  if (backup.incomeEntries) {
+    statements.push({ sql: "DELETE FROM income_entries WHERE user_id = ?", args: [userId] });
+    for (let i = 0; i < backup.incomeEntries.length; i += CHUNK) {
+      const chunk = backup.incomeEntries.slice(i, i + CHUNK);
+      statements.push({
+        sql: `INSERT INTO income_entries (user_id, amount_minor, date, description, payment_method, created_at, updated_at)
+              VALUES ${chunk.map(() => `(?, ?, ?, ?, ?, COALESCE(?, ${NOW}), COALESCE(?, ${NOW}))`).join(", ")}`,
+        args: chunk.flatMap((e) => [userId, e.amountMinor, e.date, e.description, e.paymentMethod, e.createdAt ?? null, e.updatedAt ?? null]),
+      });
+    }
   }
   if (backup.settings) statements.push(...updateSettingsStatements(userId, backup.settings));
 

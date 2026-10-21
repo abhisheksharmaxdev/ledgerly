@@ -15,6 +15,11 @@ export const PAYMENT_METHODS = [
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number]["value"];
 export const PAYMENT_METHOD_VALUES = PAYMENT_METHODS.map((p) => p.value) as [PaymentMethod, ...PaymentMethod[]];
 
+/** Ways money can be received (credit card doesn't apply to incoming money). */
+export const RECEIVED_METHODS = PAYMENT_METHODS.filter((p) => p.value !== "credit_card" && p.value !== "debit_card");
+export type ReceivedMethod = "upi" | "cash" | "bank_transfer" | "other";
+export const RECEIVED_METHOD_VALUES = ["upi", "cash", "bank_transfer", "other"] as const;
+
 export function paymentMethodLabel(value: string | null | undefined): string {
   if (!value) return "Unspecified";
   return PAYMENT_METHODS.find((p) => p.value === value)?.label ?? "Other";

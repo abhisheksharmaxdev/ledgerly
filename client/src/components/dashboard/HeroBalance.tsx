@@ -18,7 +18,8 @@ export function HeroBalance({ summary }: { summary: MonthSummary }) {
   const hasCredit = summary.creditMinor > 0;
   const creditUsed = percent(summary.creditSpentMinor, summary.creditMinor);
   const name = monthName(summary.month);
-  const noPlan = !summary.hasPlan || income === 0;
+  // Income is the planned amount plus any money received, so a month can have income without a plan.
+  const noPlan = income === 0;
 
   const scale = Math.max(income, spent + saved, 1);
   const seg = (v: number) => `${Math.max(0, Math.min(100, (v / scale) * 100))}%`;

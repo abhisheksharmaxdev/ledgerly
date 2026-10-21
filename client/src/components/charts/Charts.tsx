@@ -255,7 +255,7 @@ export function TrendChart({
   const t = useChartTheme();
   const { fmt } = useMoney();
   const reduced = useReducedMotion();
-  const data = (points ?? []).map((p) => ({ ...p, label: monthName(p.month, true), income: p.hasPlan ? p.incomeMinor : null }));
+  const data = (points ?? []).map((p) => ({ ...p, label: monthName(p.month, true), income: p.hasPlan || p.incomeMinor > 0 ? p.incomeMinor : null }));
   const withData = data.filter((d) => d.count > 0);
   const first = withData[0];
   const last = withData[withData.length - 1];
@@ -273,7 +273,7 @@ export function TrendChart({
       summary={`Monthly spending trend${direction ? `: ${direction}` : ""}.`}
       table={{
         columns: ["Month", "Spent", "Saved", "Income"],
-        rows: data.map((d) => [d.label, fmt(d.spentMinor), fmt(d.savedMinor), d.hasPlan ? fmt(d.incomeMinor) : "—"]),
+        rows: data.map((d) => [d.label, fmt(d.spentMinor), fmt(d.savedMinor), d.hasPlan || d.incomeMinor > 0 ? fmt(d.incomeMinor) : "—"]),
       }}
       height={280}
       loading={loading}
@@ -298,7 +298,7 @@ export function TrendChart({
                   rows={[
                     { label: "Spent", value: fmt(p.spentMinor), color: t.accent },
                     { label: "Saved", value: fmt(p.savedMinor), color: t.saved },
-                    { label: "Income", value: p.hasPlan ? fmt(p.incomeMinor) : "No plan", color: t.income },
+                    { label: "Income", value: p.hasPlan || p.incomeMinor > 0 ? fmt(p.incomeMinor) : "No plan", color: t.income },
                   ]}
                 />
               );

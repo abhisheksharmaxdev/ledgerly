@@ -97,6 +97,7 @@ export async function deleteUserAndData(db: DB, id: number): Promise<boolean> {
   if (!user || user.role !== "user") return false;
   await batch(db, [
     { sql: "DELETE FROM expenses WHERE user_id = ?", args: [id] },
+    { sql: "DELETE FROM income_entries WHERE user_id = ?", args: [id] },
     ...deletePlansStatements(id),
     { sql: "DELETE FROM settings WHERE user_id = ?", args: [id] },
     { sql: "DELETE FROM categories WHERE user_id = ?", args: [id] },

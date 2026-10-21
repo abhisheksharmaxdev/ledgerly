@@ -10,6 +10,8 @@ import type {
   DataStatus,
   Expense,
   ExpenseList,
+  IncomeEntry,
+  IncomeList,
   ImportPreview,
   InsightsResponse,
   MonthAnalytics,
@@ -20,7 +22,7 @@ import type {
   SessionInfo,
   TrendPoint,
 } from "../../../shared/types";
-import type { ExpenseInput, PlanInput } from "../../../shared/schemas";
+import type { ExpenseInput, IncomeInput, PlanInput } from "../../../shared/schemas";
 
 export const qk = {
   session: ["session"] as const,
@@ -34,6 +36,7 @@ export const qk = {
   trend: (end: string, count: number, today: string) => ["trend", end, count, today] as const,
   plan: (month: string) => ["plan", month] as const,
   expenses: (params: string) => ["expenses", params] as const,
+  income: (month: string) => ["income", month] as const,
   dataStatus: ["dataStatus"] as const,
 };
 
@@ -249,6 +252,29 @@ export function useDeleteExpense() {
   const invalidate = useInvalidateData();
   return useMutation({
     mutationFn: (id: number) => api<void>("DELETE", `/expenses/${id}`),
+    onSuccess: invalidate,
+  });
+}
+
+// ---------- money received ----------
+
+export function useIncome(month: string) {
+  return useQuery({ queryKey: qk.income(month), queryFn: () => api<IncomeList>("GET", `/income?month=${month}`) });
+}
+
+export function useSaveIncome() {
+  const invalidate = useInvalidateData();
+  return useMutation({
+    mutationFn: ({ id, input }: { id?: number; input: IncomeInput }) =>
+      id ? api<IncomeEntry>("PUT", `/income/${id}`, input) : api<IncomeEntry>("POST", "/income", input),
+    onSuccess: invalidate,
+  });
+}
+
+export function useDeleteIncome() {
+  const invalidate = useInvalidateData();
+  return useMutation({
+    mutationFn: (id: number) => api<void>("DELETE", `/income/${id}`),
     onSuccess: invalidate,
   });
 }

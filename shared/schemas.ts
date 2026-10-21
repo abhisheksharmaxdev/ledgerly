@@ -9,6 +9,7 @@ import {
   CURRENCY_CODES,
   MAX_AMOUNT_MINOR,
   PAYMENT_METHOD_VALUES,
+  RECEIVED_METHOD_VALUES,
 } from "./constants";
 import { isValidIsoDate, isValidMonthKey } from "./dates";
 
@@ -46,6 +47,18 @@ export const expenseInputSchema = z.object({
   paymentMethod: paymentMethodSchema.nullish().transform((v) => v ?? null),
 });
 export type ExpenseInput = z.input<typeof expenseInputSchema>;
+
+/** Money received; it's added to the month's income automatically. */
+export const incomeInputSchema = z.object({
+  amountMinor: positiveMinorAmount,
+  date: isoDate,
+  description: optionalText(200),
+  paymentMethod: z
+    .enum(RECEIVED_METHOD_VALUES, { error: "Choose how the money was received" })
+    .nullish()
+    .transform((v) => v ?? null),
+});
+export type IncomeInput = z.input<typeof incomeInputSchema>;
 
 export const planInputSchema = z
   .object({
